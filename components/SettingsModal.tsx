@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Trash2, Key } from 'lucide-react';
+import {
+  DEFAULT_GEMINI_BASE_URL,
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_API_KEY_STORAGE_KEY,
+  GEMINI_BASE_URL_STORAGE_KEY,
+  GEMINI_MODEL_STORAGE_KEY,
+  getStoredGeminiSettings,
+} from '../services/geminiConfig';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -8,25 +16,35 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_GEMINI_BASE_URL);
+  const [model, setModel] = useState(DEFAULT_GEMINI_MODEL);
   const [status, setStatus] = useState<'idle' | 'saved' | 'cleared'>('idle');
 
   useEffect(() => {
     if (isOpen) {
-      const savedKey = localStorage.getItem('CUSTOM_GEMINI_API_KEY') || '';
-      setApiKey(savedKey);
+      const saved = getStoredGeminiSettings();
+      setApiKey(saved.apiKey);
+      setBaseUrl(saved.baseUrl || DEFAULT_GEMINI_BASE_URL);
+      setModel(saved.model || DEFAULT_GEMINI_MODEL);
       setStatus('idle');
     }
   }, [isOpen]);
 
   const handleSave = () => {
-    localStorage.setItem('CUSTOM_GEMINI_API_KEY', apiKey);
+    localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, apiKey.trim());
+    localStorage.setItem(GEMINI_BASE_URL_STORAGE_KEY, baseUrl.trim());
+    localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, model.trim());
     setStatus('saved');
     setTimeout(() => setStatus('idle'), 2000);
   };
 
   const handleClear = () => {
-    localStorage.removeItem('CUSTOM_GEMINI_API_KEY');
+    localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+    localStorage.removeItem(GEMINI_BASE_URL_STORAGE_KEY);
+    localStorage.removeItem(GEMINI_MODEL_STORAGE_KEY);
     setApiKey('');
+    setBaseUrl(DEFAULT_GEMINI_BASE_URL);
+    setModel(DEFAULT_GEMINI_MODEL);
     setStatus('cleared');
     setTimeout(() => setStatus('idle'), 2000);
   };
@@ -48,7 +66,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         
         <div className="p-6">
           <label className="block text-sm font-medium text-slate-300 mb-2">
-            Custom Gemini API Key
+            Gemini API Key
           </label>
           <input
             type="password"
@@ -56,6 +74,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             onChange={(e) => setApiKey(e.target.value)}
             className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50 mb-4"
             placeholder="Enter your API key"
+          />
+
+          <label className="block text-sm font-medium text-slate-300 mb-2">
+            API Base URL
+          </label>
+          <input
+            type="url"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50 mb-4"
+            placeholder={DEFAULT_GEMINI_BASE_URL}
+          />
+
+          <label className="block text-sm font-medium text-slate-300 mb-2">
+            Model
+          </label>
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50 mb-4"
+            placeholder={DEFAULT_GEMINI_MODEL}
           />
           
           <div className="flex gap-2">
@@ -77,7 +117,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           {status === 'cleared' && <p className="text-yellow-400 text-xs mt-3 text-center">API key cleared.</p>}
           
           <p className="text-xs text-slate-500 mt-6 leading-relaxed">
-            Your API key is stored locally in your browser and is only used for requests made from this session.
+            Settings are stored locally in this browser. Cloudflare Pages can also provide
+            VITE_GEMINI_API_KEY, VITE_GEMINI_BASE_URL, and VITE_GEMINI_MODEL at build time.
           </p>
         </div>
       </div>

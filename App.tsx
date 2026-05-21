@@ -9,6 +9,7 @@ import ExportMenu from './components/ExportMenu';
 import PromptGenerator from './components/PromptGenerator';
 import SettingsModal from './components/SettingsModal';
 import { analyzeMusicMedia } from './services/geminiService';
+import { hasGeminiApiKey } from './services/geminiConfig';
 import { convertToWav } from './services/audioUtils';
 import { MusicAnalysisResult, AnalysisState } from './types';
 
@@ -24,6 +25,11 @@ const StatCard = ({ icon, label, value, isLongText = false }: { icon: React.Reac
     </div>
   </div>
 );
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+};
 
 function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -53,7 +59,7 @@ function App() {
         // But for video preview, we might want to keep the original. 
         // However, WaveformPlayer is designed for audio, and the user wants "mp3 analysis".
         setFile(fileToAnalyze);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Audio extraction failed", err);
         setStatus(AnalysisState.ERROR);
         setErrorMsg("视频音频提取失败，请确保文件未损坏。");
@@ -64,14 +70,13 @@ function App() {
     setStatus(AnalysisState.ANALYZING);
 
     try {
-      const customApiKey = localStorage.getItem('CUSTOM_GEMINI_API_KEY') || undefined;
-      const result = await analyzeMusicMedia(fileToAnalyze, analysisMode, customApiKey);
+      const result = await analyzeMusicMedia(fileToAnalyze, analysisMode);
       setAnalysis(result);
       setStatus(AnalysisState.COMPLETE);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
       setStatus(AnalysisState.ERROR);
-      setErrorMsg(err.message || "分析文件失败。");
+      setErrorMsg(getErrorMessage(err, "分析文件失败。"));
     }
   };
 
@@ -83,18 +88,13 @@ function App() {
 
   // Parses "MM:SS" string to seconds
   const parseTimestamp = (timeStr: string): number => {
-    try {
-        // Extracts the first "MM:SS" if it's a range like "00:00 - 01:20"
-        const match = timeStr.match(/(\d+):(\d+)/);
-        if (match) {
-            const minutes = parseInt(match[1], 10);
-            const seconds = parseInt(match[2], 10);
-            return minutes * 60 + seconds;
-        }
-        return 0;
-    } catch (e) {
-        return 0;
+    const match = timeStr.match(/(\d+):(\d+)/);
+    if (match) {
+        const minutes = parseInt(match[1], 10);
+        const seconds = parseInt(match[2], 10);
+        return minutes * 60 + seconds;
     }
+    return 0;
   };
 
   const handleJumpToSegment = (timestamp: string) => {
@@ -149,10 +149,10 @@ function App() {
       <main className="max-w-6xl mx-auto px-6 py-10">
         
         {/* API Key Check */}
-        {!process.env.API_KEY && (
+        {!hasGeminiApiKey() && (
            <div className="bg-red-500/10 border border-red-500 text-red-400 p-4 rounded-xl mb-8 flex items-center gap-3">
              <AlertTriangle />
-             <p>API Key 未配置。请在环境中设置 REACT_APP_API_KEY。</p>
+             <p>API Key 未配置。请在设置中填写，或在部署环境中设置 VITE_GEMINI_API_KEY。</p>
            </div>
         )}
 

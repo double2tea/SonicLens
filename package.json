@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "type-check": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.31.0",
     "html-to-image": "^1.11.13",
     "jspdf": "^2.5.1",
     "lucide-react": "^0.555.0",
@@ -21,6 +21,8 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.8.2",

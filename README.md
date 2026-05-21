@@ -1,20 +1,87 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# SonicLens
 
-# Run and deploy your AI Studio app
+Music and SFX analysis for editors, powered by a Gemini-compatible API.
 
-This contains everything you need to run your app locally.
+## API Provider
 
-View your app in AI Studio: https://ai.studio/apps/4ad10f5e-28c2-4eaf-b360-e25b83d4e235
+SonicLens calls the Gemini `generateContent` REST API directly. It defaults to the 12AI
+Gemini-compatible endpoint:
 
-## Run Locally
+```bash
+VITE_GEMINI_BASE_URL=https://cdn.12ai.org
+VITE_GEMINI_MODEL=gemini-3.5-flash
+```
 
-**Prerequisites:**  Node.js
+To use the official Gemini API instead, set:
 
+```bash
+VITE_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
+VITE_GEMINI_MODEL=gemini-2.5-flash
+```
+
+The Settings panel can override API key, base URL, and model in the browser for local testing.
+
+## Local Development
+
+Prerequisites: Node.js 22+.
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Create `.env.local`:
+
+```bash
+VITE_GEMINI_API_KEY=your_12ai_key
+VITE_GEMINI_BASE_URL=https://cdn.12ai.org
+VITE_GEMINI_MODEL=gemini-3.5-flash
+VITE_GEMINI_MAX_UPLOAD_MB=30
+```
+
+3. Run locally:
    `npm run dev`
+
+4. Verify before deploying:
+
+```bash
+npm run type-check
+npm run build
+```
+
+## Cloudflare Pages Deployment
+
+Connect this GitHub repository to Cloudflare Pages for automatic deployments.
+
+Cloudflare Pages settings:
+
+- **Framework preset:** None
+- **Build command:** `npm run build`
+- **Build output directory:** `dist`
+- **Production branch:** `main`
+- **Node.js version:** `22`
+
+Build command:
+
+```bash
+npm run build
+```
+
+Output directory:
+
+```bash
+dist
+```
+
+Set these Cloudflare Pages environment variables before building:
+
+```bash
+VITE_GEMINI_API_KEY=your_12ai_key
+VITE_GEMINI_BASE_URL=https://cdn.12ai.org
+VITE_GEMINI_MODEL=gemini-3.5-flash
+VITE_GEMINI_MAX_UPLOAD_MB=30
+```
+
+After GitHub is connected, every push to `main` triggers a production deployment. Pull
+requests or non-production branches can be configured as preview deployments in Cloudflare
+Pages.
+
+This is a static frontend deployment. `VITE_*` values are embedded in the browser bundle by
+Vite, so use a restricted API key suitable for browser-side requests.

@@ -1,6 +1,22 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { Play, Pause } from 'lucide-react';
 
+type WebKitAudioWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+const createAudioContext = (): AudioContext => {
+  const AudioContextConstructor =
+    window.AudioContext ?? (window as WebKitAudioWindow).webkitAudioContext;
+
+  if (!AudioContextConstructor) {
+    throw new Error('当前浏览器不支持音频解码。');
+  }
+
+  return new AudioContextConstructor();
+};
+
 interface WaveformPlayerProps {
   file: File;
   autoPlay?: boolean;
@@ -76,7 +92,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, WaveformPlayerProps>(({ fil
       setIsDecoding(true);
       try {
         const arrayBuffer = await file.arrayBuffer();
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioContext = createAudioContext();
         
         // Handle decoding errors (often happens with video files in some browsers)
         try {

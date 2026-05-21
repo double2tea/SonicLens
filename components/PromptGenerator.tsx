@@ -6,6 +6,40 @@ interface PromptGeneratorProps {
   type: 'music' | 'sfx';
 }
 
+type MusicVibe = 'none' | 'cinematic' | 'vintage' | 'cyber' | 'haunting';
+type VocalMode = 'none' | 'instrumental' | 'female' | 'male' | 'acoustic';
+type SfxSpace = 'none' | 'dry' | 'cathedral' | 'chiptune';
+type SfxKinetic = 'none' | 'impact' | 'loop';
+
+const musicVibeOptions: Array<{ id: MusicVibe; label: string }> = [
+  { id: 'none', label: '原汁原味 (Default)' },
+  { id: 'cinematic', label: '影视交响 (Epic)' },
+  { id: 'vintage', label: '复古微黄 (Lofi)' },
+  { id: 'cyber', label: '赛博未来 (Cyber)' },
+  { id: 'haunting', label: '悬疑幽暗 (Dark)' },
+];
+
+const vocalModeOptions: Array<{ id: VocalMode; label: string }> = [
+  { id: 'none', label: '原样配比 (Keep)' },
+  { id: 'instrumental', label: '纯器乐演奏 (Pure)' },
+  { id: 'female', label: '空灵女声领唱' },
+  { id: 'male', label: '烟熏男声领唱' },
+  { id: 'acoustic', label: '不插电原声 (Acoustic)' },
+];
+
+const sfxSpaceOptions: Array<{ id: SfxSpace; label: string }> = [
+  { id: 'none', label: '默认空间 (Default)' },
+  { id: 'dry', label: '近场干硬录音 (Dry)' },
+  { id: 'cathedral', label: '大教堂大厅 (Cathedral)' },
+  { id: 'chiptune', label: '8-bit 复古电子' },
+];
+
+const sfxKineticOptions: Array<{ id: SfxKinetic; label: string }> = [
+  { id: 'none', label: '默认动力 (Default)' },
+  { id: 'impact', label: '强瞬态锤击 (Impact)' },
+  { id: 'loop', label: '连绵平缓背景 (Loop)' },
+];
+
 const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPrompt, type }) => {
   const [copied, setCopied] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
@@ -13,11 +47,11 @@ const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPromp
 
   // Custom Options States
   const [targetEngine, setTargetEngine] = useState<'default' | 'suno' | 'udio' | 'stable'>('default');
-  const [musicVibe, setMusicVibe] = useState<'none' | 'cinematic' | 'vintage' | 'cyber' | 'haunting'>('none');
-  const [vocalMode, setVocalMode] = useState<'none' | 'instrumental' | 'female' | 'male' | 'acoustic'>('none');
+  const [musicVibe, setMusicVibe] = useState<MusicVibe>('none');
+  const [vocalMode, setVocalMode] = useState<VocalMode>('none');
   
-  const [sfxSpace, setSfxSpace] = useState<'none' | 'dry' | 'cathedral' | 'chiptune'>('none');
-  const [sfxKinetic, setSfxKinetic] = useState<'none' | 'impact' | 'loop'>('none');
+  const [sfxSpace, setSfxSpace] = useState<SfxSpace>('none');
+  const [sfxKinetic, setSfxKinetic] = useState<SfxKinetic>('none');
 
   // Multi-option prompt generation logic
   useEffect(() => {
@@ -198,16 +232,10 @@ const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPromp
                 2. 情绪氛围强化 (Themes)
               </label>
               <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {[
-                  { id: 'none', label: '原汁原味 (Default)' },
-                  { id: 'cinematic', label: '影视交响 (Epic)' },
-                  { id: 'vintage', label: '复古微黄 (Lofi)' },
-                  { id: 'cyber', label: '赛博未来 (Cyber)' },
-                  { id: 'haunting', label: '悬疑幽暗 (Dark)' }
-                ].map(item => (
+                {musicVibeOptions.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setMusicVibe(item.id as any)}
+                    onClick={() => setMusicVibe(item.id)}
                     className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${musicVibe === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-orange-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                   >
                     {item.label}
@@ -223,16 +251,10 @@ const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPromp
                 3. 声部配器形态 (Structure)
               </label>
               <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {[
-                  { id: 'none', label: '原样配比 (Keep)' },
-                  { id: 'instrumental', label: '纯器乐演奏 (Pure)' },
-                  { id: 'female', label: '空灵女声领唱' },
-                  { id: 'male', label: '烟熏男声领唱' },
-                  { id: 'acoustic', label: '不插电原声 (Acoustic)' }
-                ].map(item => (
+                {vocalModeOptions.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setVocalMode(item.id as any)}
+                    onClick={() => setVocalMode(item.id)}
                     className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${vocalMode === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-orange-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                   >
                     {item.label}
@@ -250,15 +272,10 @@ const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPromp
                 2. 空间混响特征 (Acoustic Space)
               </label>
               <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {[
-                  { id: 'none', label: '默认空间 (Default)' },
-                  { id: 'dry', label: '近场干硬录音 (Dry)' },
-                  { id: 'cathedral', label: '大教堂大厅 (Cathedral)' },
-                  { id: 'chiptune', label: '8-bit 复古电子' }
-                ].map(item => (
+                {sfxSpaceOptions.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setSfxSpace(item.id as any)}
+                    onClick={() => setSfxSpace(item.id)}
                     className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${sfxSpace === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-cyan-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                   >
                     {item.label}
@@ -274,14 +291,10 @@ const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPromp
                 3. 声音瞬态冲能 (Dynamics)
               </label>
               <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {[
-                  { id: 'none', label: '默认动力 (Default)' },
-                  { id: 'impact', label: '强瞬态锤击 (Impact)' },
-                  { id: 'loop', label: '连绵平缓背景 (Loop)' }
-                ].map(item => (
+                {sfxKineticOptions.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setSfxKinetic(item.id as any)}
+                    onClick={() => setSfxKinetic(item.id)}
                     className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${sfxKinetic === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-cyan-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
                   >
                     {item.label}

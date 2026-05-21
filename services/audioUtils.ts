@@ -2,8 +2,24 @@
  * Utilities for client-side audio processing
  */
 
+type WebKitAudioWindow = Window &
+  typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+const createAudioContext = (): AudioContext => {
+  const AudioContextConstructor =
+    window.AudioContext ?? (window as WebKitAudioWindow).webkitAudioContext;
+
+  if (!AudioContextConstructor) {
+    throw new Error("当前浏览器不支持音频解码。");
+  }
+
+  return new AudioContextConstructor();
+};
+
 export async function convertToWav(file: File): Promise<File> {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const audioContext = createAudioContext();
   const arrayBuffer = await file.arrayBuffer();
   
   try {
