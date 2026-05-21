@@ -63,7 +63,7 @@ const StockLinks: React.FC<StockLinksProps> = ({
     },
     {
       name: "Extreme Music",
-      url: buildSearchUrl('https://www.extrememusic.com/search', 'q', query),
+      url: buildSearchUrl('https://www.extrememusic.com/search', 'query', query),
       accentColor: "#ef4444",
       desc: "顶级影视配乐Hans Zimmer大厂"
     },
