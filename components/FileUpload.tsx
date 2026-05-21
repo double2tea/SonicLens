@@ -61,8 +61,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, mode })
            {isMusic ? '拖入音乐 (Music)' : '拖入音效 (SFX)'} 或点击上传
         </h3>
         <p className="text-slate-400 max-w-sm leading-relaxed">
-          支持 MP3, WAV, AAC 以及 MP4 视频提取。
-          <br/><span className="text-xs text-slate-500 font-bold bg-black/40 px-2 py-1 rounded mt-2 inline-block">最大文件大小: 30MB (视频建议小于 20MB)</span>
+          支持 MP3, WAV, AAC 以及 MP4 视频；视频会先本地提取音频。
+          <br/><span className="text-xs text-slate-500 font-bold bg-black/40 px-2 py-1 rounded mt-2 inline-block">上传前自动压缩分析音频，默认目标 12MB</span>
         </p>
         
         <div className="flex gap-6 mt-8">

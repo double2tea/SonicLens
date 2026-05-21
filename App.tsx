@@ -9,9 +9,11 @@ import ExportMenu from './components/ExportMenu';
 import PromptGenerator from './components/PromptGenerator';
 import SettingsModal from './components/SettingsModal';
 import { analyzeMusicMedia } from './services/geminiService';
-import { hasGeminiApiKey } from './services/geminiConfig';
-import { convertToWav } from './services/audioUtils';
-import { MusicAnalysisResult, AnalysisState } from './types';
+import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig';
+import { prepareAudioForAnalysis } from './services/audioUtils';
+import type { AudioPreparationResult } from './services/audioUtils';
+import { AnalysisState } from './types';
+import type { MusicAnalysisResult } from './types';
 
 // Stat Card Component Helper
 const StatCard = ({ icon, label, value, isLongText = false }: { icon: React.ReactNode, label: string, value: string | number, isLongText?: boolean }) => (
@@ -31,6 +33,16 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+};
+
+const describePreparedFile = (result: AudioPreparationResult): string => {
+  if (!result.wasTranscoded) return `上传原文件 ${formatBytes(result.processedBytes)}`;
+  return `已本地转码压缩：${formatBytes(result.originalBytes)} -> ${formatBytes(result.processedBytes)}，${result.sampleRate / 1000}kHz 单声道 WAV`;
+};
+
 function App() {
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<MusicAnalysisResult | null>(null);
@@ -38,6 +50,9 @@ function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysisMode, setAnalysisMode] = useState<'music' | 'sfx'>('music');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [processingTitle, setProcessingTitle] = useState('');
+  const [processingDetail, setProcessingDetail] = useState('');
+  const [processingSummary, setProcessingSummary] = useState('');
   
   // Ref for the content we want to export
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -45,31 +60,29 @@ function App() {
   const playerRef = useRef<WaveformPlayerRef>(null);
 
   const handleFileSelect = async (selectedFile: File) => {
-    let fileToAnalyze = selectedFile;
     setFile(selectedFile);
     setAnalysis(null);
     setErrorMsg(null);
-    
-    // If it's MP4 video, we extract audio first
-    if (selectedFile.type === 'video/mp4') {
-      setStatus(AnalysisState.CONVERTING);
-      try {
-        fileToAnalyze = await convertToWav(selectedFile);
-        // We set the "file" state to the converted audio if we want to preview it as audio
-        // But for video preview, we might want to keep the original. 
-        // However, WaveformPlayer is designed for audio, and the user wants "mp3 analysis".
-        setFile(fileToAnalyze);
-      } catch (err: unknown) {
-        console.error("Audio extraction failed", err);
-        setStatus(AnalysisState.ERROR);
-        setErrorMsg("视频音频提取失败，请确保文件未损坏。");
-        return;
-      }
-    }
-    
-    setStatus(AnalysisState.ANALYZING);
+    setProcessingSummary('');
+    setStatus(AnalysisState.CONVERTING);
 
     try {
+      const config = getGeminiRuntimeConfig();
+      const targetUploadMb = Math.min(config.audioTargetUploadMb, config.maxUploadMb);
+      const preparedAudio = await prepareAudioForAnalysis(selectedFile, {
+        maxBytes: targetUploadMb * 1024 * 1024,
+        onProgress: ({ title, detail }) => {
+          setProcessingTitle(title);
+          setProcessingDetail(detail);
+        },
+      });
+      const fileToAnalyze = preparedAudio.file;
+      setFile(fileToAnalyze);
+      setProcessingSummary(describePreparedFile(preparedAudio));
+      setProcessingTitle('正在上传并分析');
+      setProcessingDetail('只上传处理后的分析音频，模型正在识别节奏、音色、段落与剪辑卡点。');
+      setStatus(AnalysisState.ANALYZING);
+
       const result = await analyzeMusicMedia(fileToAnalyze, analysisMode);
       setAnalysis(result);
       setStatus(AnalysisState.COMPLETE);
@@ -83,6 +96,9 @@ function App() {
   const handleReset = () => {
     setFile(null);
     setAnalysis(null);
+    setProcessingSummary('');
+    setProcessingTitle('');
+    setProcessingDetail('');
     setStatus(AnalysisState.IDLE);
   };
 
@@ -208,10 +224,17 @@ function App() {
                  <Loader2 className={`w-10 h-10 text-white animate-spin`} />
                </div>
             </div>
-            <h3 className="text-2xl font-semibold mb-2">正在提取视频音频...</h3>
+            <h3 className="text-2xl font-semibold mb-2">
+              {processingTitle || '正在准备分析音频'}
+            </h3>
             <p className="text-slate-400">
-              正在从 MP4 视频中提取高质量音频流以进行深度 AI 分析。
+              上传前会在浏览器本地提取并压缩音频，控制发送给模型的文件大小。
             </p>
+            {processingDetail && (
+              <p className="text-sm text-slate-500 mt-3 max-w-md mx-auto leading-relaxed">
+                {processingDetail}
+              </p>
+            )}
           </motion.div>
         )}
 
@@ -228,12 +251,20 @@ function App() {
                  <Sparkles className={`w-10 h-10 ${analysisMode === 'music' ? 'text-[var(--color-accent)]' : 'text-[#00f0ff]'} animate-pulse`} />
                </div>
             </div>
-            <h3 className="text-2xl font-semibold mb-2">正在分析 {analysisMode === 'music' ? '音乐' : '音效'}...</h3>
+            <h3 className="text-2xl font-semibold mb-2">
+              {processingTitle || `正在分析 ${analysisMode === 'music' ? '音乐' : '音效'}...`}
+            </h3>
             <p className="text-slate-400">
-              {analysisMode === 'music' 
+              {processingDetail || (analysisMode === 'music' 
                 ? '正在深入分析波形、流派、分段节奏及乐器构成...' 
-                : '识别 UCS 分类、Foley 拟音方案及材质分析。'}
+                : '识别 UCS 分类、Foley 拟音方案及材质分析。')}
             </p>
+            {processingSummary && (
+              <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-300">
+                <Info size={14} />
+                <span>{processingSummary}</span>
+              </div>
+            )}
             {file && (
                 <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 glass-panel text-sm text-slate-400">
                     <FileAudio size={14} />
@@ -314,6 +345,9 @@ function App() {
                       )}
 
                       <p className="text-slate-400 text-sm font-mono truncate max-w-md mt-2">{file?.name}</p>
+                      {processingSummary && (
+                        <p className="text-xs text-emerald-300 mt-2">{processingSummary}</p>
+                      )}
                    </div>
                 </div>
 

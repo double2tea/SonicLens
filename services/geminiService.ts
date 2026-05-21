@@ -42,9 +42,9 @@ interface GeminiGenerateContentResponse {
 const jsonOutputRules = `
 **JSON 输出硬约束**
 - 只返回一个 JSON object，不要 Markdown 代码块、解释文字或前后缀。
-- 为避免第三方 API 截断，所有字段必须紧凑：中文长文本字段控制在 120 字以内，英文 prompt 控制在 60 词以内。
-- \`segments\` 最多 4 段，\`editorCuePoints\` 最多 5 个，\`similarTracks\` 最多 3 首。
-- 数组字段只保留最关键项目：\`keywords\`、\`mood\`、\`instruments\` 均最多 8 项。
+- 为避免第三方 API 截断，所有字段必须紧凑但信息完整：中文长文本字段控制在 180 字以内，英文 prompt 控制在 90 词以内。
+- \`segments\` 最多 6 段，\`editorCuePoints\` 最多 6 个，\`similarTracks\` 最多 4 首。
+- 数组字段只保留最关键项目：\`keywords\`、\`mood\`、\`instruments\` 均最多 10 项。
 - 不要重复同一句分析；优先给结论和可执行剪辑信息。`;
 
 const analysisSchema: GeminiSchema = {
@@ -363,7 +363,7 @@ export const analyzeMusicMedia = async (
         responseMimeType: 'application/json',
         responseSchema: analysisSchema,
         temperature: 0.2,
-        maxOutputTokens: 8192,
+        maxOutputTokens: config.maxOutputTokens,
       },
     }),
   });

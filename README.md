@@ -34,6 +34,8 @@ VITE_GEMINI_API_KEY=your_12ai_key
 VITE_GEMINI_BASE_URL=https://cdn.12ai.org
 VITE_GEMINI_MODEL=gemini-3.5-flash
 VITE_GEMINI_MAX_UPLOAD_MB=30
+VITE_AUDIO_TARGET_UPLOAD_MB=12
+VITE_GEMINI_MAX_OUTPUT_TOKENS=12288
 ```
 
 3. Run locally:
@@ -77,6 +79,8 @@ VITE_GEMINI_API_KEY=your_12ai_key
 VITE_GEMINI_BASE_URL=https://cdn.12ai.org
 VITE_GEMINI_MODEL=gemini-3.5-flash
 VITE_GEMINI_MAX_UPLOAD_MB=30
+VITE_AUDIO_TARGET_UPLOAD_MB=12
+VITE_GEMINI_MAX_OUTPUT_TOKENS=12288
 ```
 
 After GitHub is connected, every push to `main` triggers a production deployment. Pull
@@ -85,3 +89,12 @@ Pages.
 
 This is a static frontend deployment. `VITE_*` values are embedded in the browser bundle by
 Vite, so use a restricted API key suitable for browser-side requests.
+
+## Media Processing
+
+SonicLens prepares media in the browser before calling the API:
+
+- MP4/video files are decoded locally and only the extracted analysis audio is uploaded.
+- Large audio or WAV files are transcoded to mono WAV with a lower sample rate.
+- `VITE_AUDIO_TARGET_UPLOAD_MB` controls the target processed audio size.
+- `VITE_GEMINI_MAX_OUTPUT_TOKENS` controls the maximum model response length.

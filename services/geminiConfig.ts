@@ -5,12 +5,16 @@ export const GEMINI_MODEL_STORAGE_KEY = 'CUSTOM_GEMINI_MODEL';
 export const DEFAULT_GEMINI_BASE_URL = 'https://cdn.12ai.org';
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 export const DEFAULT_MAX_UPLOAD_MB = 30;
+export const DEFAULT_AUDIO_TARGET_UPLOAD_MB = 12;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 12288;
 
 export interface GeminiRuntimeConfig {
   apiKey?: string;
   baseUrl: string;
   model: string;
   maxUploadMb: number;
+  audioTargetUploadMb: number;
+  maxOutputTokens: number;
 }
 
 export interface StoredGeminiSettings {
@@ -51,6 +55,14 @@ export const getGeminiRuntimeConfig = (): GeminiRuntimeConfig => {
     maxUploadMb: parsePositiveNumber(
       import.meta.env.VITE_GEMINI_MAX_UPLOAD_MB,
       DEFAULT_MAX_UPLOAD_MB
+    ),
+    audioTargetUploadMb: parsePositiveNumber(
+      import.meta.env.VITE_AUDIO_TARGET_UPLOAD_MB,
+      DEFAULT_AUDIO_TARGET_UPLOAD_MB
+    ),
+    maxOutputTokens: parsePositiveNumber(
+      import.meta.env.VITE_GEMINI_MAX_OUTPUT_TOKENS,
+      DEFAULT_MAX_OUTPUT_TOKENS
     ),
   };
 };
