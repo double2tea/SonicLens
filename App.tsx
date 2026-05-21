@@ -15,6 +15,8 @@ import type { AudioPreparationResult } from './services/audioUtils';
 import { AnalysisState } from './types';
 import type { MusicAnalysisResult } from './types';
 
+const API_KEY_REGISTER_URL = 'https://new.12ai.org/register?aff=PYE8';
+
 // Stat Card Component Helper
 const StatCard = ({ icon, label, value, isLongText = false }: { icon: React.ReactNode, label: string, value: string | number, isLongText?: boolean }) => (
   <div className="glass-panel p-4 flex flex-col justify-between h-full">
@@ -168,7 +170,19 @@ function App() {
         {!hasGeminiApiKey() && (
            <div className="bg-red-500/10 border border-red-500 text-red-400 p-4 rounded-xl mb-8 flex items-center gap-3">
              <AlertTriangle />
-             <p>API Key 未配置。请在设置中填写，或在部署环境中设置 VITE_GEMINI_API_KEY。</p>
+             <p>
+               API Key 未配置。请在设置中填写，或
+               <a
+                 href={API_KEY_REGISTER_URL}
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 className="inline-flex items-center gap-1 mx-1 text-white underline underline-offset-4 hover:text-red-200"
+               >
+                 使用邀请码注册 12AI
+                 <ExternalLink size={13} />
+               </a>
+               后填入。
+             </p>
            </div>
         )}
 

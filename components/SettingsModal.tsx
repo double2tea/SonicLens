@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Trash2, Key } from 'lucide-react';
+import { X, Save, Trash2, Key, ExternalLink } from 'lucide-react';
 import {
   DEFAULT_GEMINI_BASE_URL,
   DEFAULT_GEMINI_MODEL,
@@ -8,6 +8,8 @@ import {
   GEMINI_MODEL_STORAGE_KEY,
   getStoredGeminiSettings,
 } from '../services/geminiConfig';
+
+const API_KEY_REGISTER_URL = 'https://new.12ai.org/register?aff=PYE8';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -68,6 +70,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           <label className="block text-sm font-medium text-slate-300 mb-2">
             Gemini API Key
           </label>
+          <a
+            href={API_KEY_REGISTER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-[var(--color-accent)] hover:text-white transition-colors mb-3"
+          >
+            没有 API Key？使用邀请码注册 12AI
+            <ExternalLink size={12} />
+          </a>
           <input
             type="password"
             value={apiKey}

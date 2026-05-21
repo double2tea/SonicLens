@@ -21,6 +21,9 @@ VITE_GEMINI_MODEL=gemini-2.5-flash
 
 The Settings panel can override API key, base URL, and model in the browser for local testing.
 
+Get a 12AI API key with this invite link:
+https://new.12ai.org/register?aff=PYE8
+
 ## Local Development
 
 Prerequisites: Node.js 22+.
