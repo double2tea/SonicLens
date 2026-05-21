@@ -4,8 +4,6 @@ import { ExternalLink, Search } from 'lucide-react';
 interface StockLinksProps {
   keywords?: string[];
   genre?: string;
-  customQuery?: string;
-  variant?: 'grid' | 'compact';
   type?: 'music' | 'sfx';
 }
 
@@ -26,9 +24,7 @@ const buildSearchUrl = (baseUrl: string, param: string, query: string): string =
   return `${baseUrl}${separator}${param}=${encodeQuery(query)}`;
 };
 
-const getSearchQuery = (customQuery: string | undefined, genre: string | undefined, keywords: string[]): string => {
-  if (customQuery) return customQuery.trim();
-
+const getSearchQuery = (genre: string | undefined, keywords: string[]): string => {
   const terms = [genre, ...keywords].filter((term): term is string => Boolean(term?.trim()));
   return Array.from(new Set(terms)).slice(0, 4).join(' ');
 };
@@ -36,11 +32,9 @@ const getSearchQuery = (customQuery: string | undefined, genre: string | undefin
 const StockLinks: React.FC<StockLinksProps> = ({ 
   keywords = [], 
   genre, 
-  customQuery,
-  variant = 'grid',
   type = 'music'
 }) => {
-  const query = getSearchQuery(customQuery, genre, keywords);
+  const query = getSearchQuery(genre, keywords);
 
   const musicSites: StockSite[] = [
     {
@@ -110,38 +104,10 @@ const StockLinks: React.FC<StockLinksProps> = ({
   ];
 
   const sites = type === 'sfx' ? sfxSites : musicSites;
-  const hoverBorderColor = type === 'sfx' ? 'hover:border-[#00f0ff]' : 'hover:border-[var(--color-accent)]';
-
-  if (variant === 'compact') {
-    return (
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">
-          探寻类似风格:
-        </span>
-        {sites.map((site) => (
-          <a
-            key={site.name}
-            href={site.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={site.supportsDeepSearch === false ? `打开 ${site.name} 搜索入口` : `在 ${site.name} 搜索相似音频`}
-            style={{ '--brand-accent': site.accentColor } as React.CSSProperties}
-            className={`flex items-center gap-1.5 bg-white/5 border border-white/5 hover:border-[var(--brand-accent)] text-xs px-3 py-1.5 rounded-full text-slate-300 hover:text-white transition-all duration-300 group`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full transition-transform group-hover:scale-125" style={{ backgroundColor: site.accentColor }}></span>
-            <span>{site.name}</span>
-            <ExternalLink size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
-          </a>
-        ))}
-      </div>
-    );
-  }
-
   const gridColsClass = sites.length === 6 
     ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6' 
     : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4';
 
-  // Default Grid Variant
   return (
     <div className={`grid ${gridColsClass} gap-4 mt-6`}>
       {sites.map((site) => (

@@ -8,6 +8,7 @@ import WaveformPlayer, { WaveformPlayerRef } from './components/WaveformPlayer';
 import ExportMenu from './components/ExportMenu';
 import PromptGenerator from './components/PromptGenerator';
 import SettingsModal from './components/SettingsModal';
+import ReferenceTrackLinks from './components/ReferenceTrackLinks';
 import { analyzeMusicMedia } from './services/geminiService';
 import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig';
 import { prepareAudioForAnalysis } from './services/audioUtils';
@@ -586,12 +587,9 @@ function App() {
                                   </div>
                                   <Disc className="text-slate-600 group-hover:text-[var(--color-accent)] transition-colors opacity-50 group-hover:opacity-100" />
                                 </div>
-                                {/* Per-track stock links */}
+                                {/* Per-track reference links */}
                                 <div className="border-t border-white/10 pt-2">
-                                  <StockLinks 
-                                    variant="compact" 
-                                    customQuery={`${track.title} ${track.artist} style`} 
-                                  />
+                                  <ReferenceTrackLinks track={track} />
                                 </div>
                             </div>
                         ))}
@@ -608,7 +606,7 @@ function App() {
                 <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">
                     基于整体分析的素材库搜索
                 </h4>
-                <StockLinks keywords={analysis.keywords} genre={analysis.mainGenre} variant="grid" type={analysis.type} />
+                <StockLinks keywords={analysis.keywords} genre={analysis.mainGenre} type={analysis.type} />
             </div>
           </motion.div>
         )}
