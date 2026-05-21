@@ -39,6 +39,14 @@ interface GeminiGenerateContentResponse {
   };
 }
 
+const jsonOutputRules = `
+**JSON 输出硬约束**
+- 只返回一个 JSON object，不要 Markdown 代码块、解释文字或前后缀。
+- 为避免第三方 API 截断，所有字段必须紧凑：中文长文本字段控制在 120 字以内，英文 prompt 控制在 60 词以内。
+- \`segments\` 最多 4 段，\`editorCuePoints\` 最多 5 个，\`similarTracks\` 最多 3 首。
+- 数组字段只保留最关键项目：\`keywords\`、\`mood\`、\`instruments\` 均最多 8 项。
+- 不要重复同一句分析；优先给结论和可执行剪辑信息。`;
+
 const analysisSchema: GeminiSchema = {
   type: 'OBJECT',
   properties: {
@@ -213,6 +221,8 @@ const buildSystemPrompt = (mode: 'music' | 'sfx'): string => {
 - \`vibeChange\`: 描述声学环境与动态压力的瞬时改变听感（例如 "电声声部全数淡出，仅保留无混响干声 Rhodes 钢琴，呈现窒息感"）。
 - \`visualAdvice\`: 专为剪辑师设计的黄金剪辑转场策略（例如 "此点最宜作为画中人物眼神特写或急促物理撞击动作的卡点；建议使用跳接(Jump Cut)或物理变速慢动作(Speed Ramp)启动，突出宿命感"）。
 
+${jsonOutputRules}
+
 请直接返回满足 analysisSchema Schema 的 JSON 结果。非英文部分的文本请用纯简体中文书写，Keywords 和 similarTracks 以及 optimizedPrompt 必须为专业英文。`;
   }
 
@@ -230,6 +240,8 @@ const buildSystemPrompt = (mode: 'music' | 'sfx'): string => {
 - 微观力学行为 (e.g., sharp scraping, metal on stone crunch)
 - 声学空间与声道细节 (e.g., dry mono close-up recording, intimate studio microphone, binaural panning)
 - 瞬态和频率调节 (e.g., explosive hard impact transient with rapid muffled decay)
+
+${jsonOutputRules}
 
 请直接返回满足 analysisSchema Schema 的 JSON 结果。非英文部分的文本请用纯简体中文书写，Keywords 和 optimizedPrompt 必须为专业英文。`;
 };
@@ -264,11 +276,34 @@ const buildGenerateContentUrl = (baseUrl: string, model: string, apiKey: string)
 };
 
 const getResponseText = (payload: GeminiGenerateContentResponse): string => {
-  const text = payload.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text;
+  const candidate = payload.candidates?.[0];
+  if (candidate?.finishReason === 'MAX_TOKENS') {
+    throw new Error('模型输出被截断。请换用输出额度更高的模型，或上传更短的音视频片段后重试。');
+  }
+
+  const text = candidate?.content?.parts?.find((part) => part.text)?.text;
   if (!text) {
     throw new Error('模型未返回文本数据。');
   }
   return text;
+};
+
+const normalizeJsonText = (text: string): string => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+
+  return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+};
+
+const parseAnalysisJson = (text: string): Partial<MusicAnalysisResult> => {
+  try {
+    return JSON.parse(normalizeJsonText(text)) as Partial<MusicAnalysisResult>;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error('模型返回的 JSON 不完整或格式无效。请重试；如果仍出现该错误，请上传更短片段或切换模型。');
+    }
+    throw error;
+  }
 };
 
 const readErrorMessage = (payload: unknown, fallback: string): string => {
@@ -328,6 +363,7 @@ export const analyzeMusicMedia = async (
         responseMimeType: 'application/json',
         responseSchema: analysisSchema,
         temperature: 0.2,
+        maxOutputTokens: 8192,
       },
     }),
   });
@@ -337,7 +373,7 @@ export const analyzeMusicMedia = async (
     throw new Error(readErrorMessage(payload, `Gemini API 请求失败：HTTP ${response.status}`));
   }
 
-  const parsed = JSON.parse(getResponseText(payload)) as Partial<MusicAnalysisResult>;
+  const parsed = parseAnalysisJson(getResponseText(payload));
   return {
     ...parsed,
     type: mode,
