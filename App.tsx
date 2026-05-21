@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Music,
@@ -71,13 +71,58 @@ const describePreparedFile = (result: AudioPreparationResult): string => {
 };
 
 const formatHistoryTime = (value: string): string => (
-  new Date(value).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
+  new Date(value).toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
   })
 );
+
+interface AnalysisHistoryDateGroup {
+  dateKey: string;
+  label: string;
+  items: AnalysisHistoryItem[];
+}
+
+const getLocalDateKey = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const formatHistoryDateLabel = (dateKey: string): string => {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (dateKey === getLocalDateKey(today)) return '今天';
+  if (dateKey === getLocalDateKey(yesterday)) return '昨天';
+
+  const [year, month, day] = dateKey.split('-');
+  return `${year}年${month}月${day}日`;
+};
+
+const groupAnalysisHistoryByDate = (history: AnalysisHistoryItem[]): AnalysisHistoryDateGroup[] => {
+  const groups: AnalysisHistoryDateGroup[] = [];
+
+  history.forEach((item) => {
+    const dateKey = getLocalDateKey(new Date(item.createdAt));
+    const group = groups.find((candidate) => candidate.dateKey === dateKey);
+
+    if (group) {
+      group.items.push(item);
+      return;
+    }
+
+    groups.push({
+      dateKey,
+      label: formatHistoryDateLabel(dateKey),
+      items: [item],
+    });
+  });
+
+  return groups;
+};
 
 const getHistoryTitle = (item: AnalysisHistoryItem): string => {
   if (item.analysis.type === 'sfx') return item.analysis.sfx?.name || '音效分析';
@@ -99,6 +144,10 @@ function App() {
   const [processingTitle, setProcessingTitle] = useState('');
   const [processingDetail, setProcessingDetail] = useState('');
   const [processingSummary, setProcessingSummary] = useState('');
+  const groupedAnalysisHistory = useMemo(
+    () => groupAnalysisHistoryByDate(analysisHistory),
+    [analysisHistory]
+  );
   
   // Ref for the content we want to export
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -312,28 +361,40 @@ function App() {
               </div>
 
               {analysisHistory.length > 0 ? (
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {analysisHistory.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => handleRestoreHistory(item)}
-                      className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/5 hover:border-[var(--color-accent)]/40 rounded-xl p-3 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-slate-100 truncate">{item.fileName}</span>
-                            <span className="text-[10px] uppercase text-slate-300 bg-black/30 border border-white/10 px-1.5 py-0.5 rounded">
-                              {item.analysisMode}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-500 mt-1">
-                            {getHistoryTitle(item)} · {formatBytes(item.fileSize)} · {formatHistoryTime(item.createdAt)}
-                          </div>
-                        </div>
-                        <ExternalLink size={14} className="text-slate-500 flex-shrink-0" />
+                <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
+                  {groupedAnalysisHistory.map((group) => (
+                    <section key={group.dateKey} className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 px-1">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                          {group.label}
+                        </h4>
+                        <span className="text-[11px] font-mono text-slate-600">
+                          {group.items.length} 条
+                        </span>
                       </div>
-                    </button>
+                      {group.items.map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => handleRestoreHistory(item)}
+                          className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/5 hover:border-[var(--color-accent)]/40 rounded-xl p-3 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-100 truncate">{item.fileName}</span>
+                                <span className="text-[10px] uppercase text-slate-300 bg-black/30 border border-white/10 px-1.5 py-0.5 rounded">
+                                  {item.analysisMode}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500 mt-1">
+                                {getHistoryTitle(item)} · {formatBytes(item.fileSize)} · {formatHistoryTime(item.createdAt)}
+                              </div>
+                            </div>
+                            <ExternalLink size={14} className="text-slate-500 flex-shrink-0" />
+                          </div>
+                        </button>
+                      ))}
+                    </section>
                   ))}
                 </div>
               ) : (
