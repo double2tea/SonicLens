@@ -9,6 +9,30 @@ interface StockLinksProps {
   type?: 'music' | 'sfx';
 }
 
+interface StockSite {
+  name: string;
+  url: string;
+  accentColor: string;
+  desc: string;
+  supportsDeepSearch?: boolean;
+}
+
+const encodeQuery = (query: string): string => encodeURIComponent(query);
+
+const buildSearchUrl = (baseUrl: string, param: string, query: string): string => {
+  if (!query) return baseUrl;
+
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}${param}=${encodeQuery(query)}`;
+};
+
+const getSearchQuery = (customQuery: string | undefined, genre: string | undefined, keywords: string[]): string => {
+  if (customQuery) return customQuery.trim();
+
+  const terms = [genre, ...keywords].filter((term): term is string => Boolean(term?.trim()));
+  return Array.from(new Set(terms)).slice(0, 4).join(' ');
+};
+
 const StockLinks: React.FC<StockLinksProps> = ({ 
   keywords = [], 
   genre, 
@@ -16,84 +40,70 @@ const StockLinks: React.FC<StockLinksProps> = ({
   variant = 'grid',
   type = 'music'
 }) => {
-  // Logic: 
-  // 1. If customQuery is provided (e.g. specific song title), use it.
-  // 2. Otherwise use the first 2-3 keywords.
-  let query = '';
-  let audioNetQuery = '';
+  const query = getSearchQuery(customQuery, genre, keywords);
 
-  if (customQuery) {
-    query = customQuery;
-    audioNetQuery = customQuery; // Keep it simple for Audio Network too
-  } else {
-    query = keywords.slice(0, 3).join(' '); 
-    audioNetQuery = keywords.slice(0, 2).join(' ');
-  }
-
-  const encodedQuery = encodeURIComponent(query);
-  const encodedAudioNetQuery = encodeURIComponent(audioNetQuery);
-
-  const musicSites = [
+  const musicSites: StockSite[] = [
     {
       name: "Artlist",
-      url: `https://artlist.io/royalty-free-music/search?terms=${encodedQuery}`,
+      url: buildSearchUrl('https://artlist.io/royalty-free-music/search', 'search', query),
       accentColor: "#eab308",
       desc: "电影感独立创作库"
     },
     {
       name: "Musicbed",
-      url: `https://www.musicbed.com/songs?q=${encodedQuery}`,
+      url: buildSearchUrl('https://www.musicbed.com/songs', 'q', query),
       accentColor: "#ffffff",
       desc: "艺术声学高端曲库"
     },
     {
       name: "Epidemic Sound",
-      url: `https://www.epidemicsound.com/music/search/?term=${encodedQuery}`,
+      url: buildSearchUrl('https://www.epidemicsound.com/music/', 'term', query),
       accentColor: "#f43f5e",
       desc: "大牌自媒体无版权曲库"
     },
     {
       name: "Extreme Music",
-      url: `https://www.extrememusic.com/search?q=${encodedQuery}`,
+      url: buildSearchUrl('https://www.extrememusic.com/search', 'q', query),
       accentColor: "#ef4444",
       desc: "顶级影视配乐Hans Zimmer大厂"
     },
     {
       name: "PremiumBeat",
-      url: `https://www.premiumbeat.com/royalty-free-music?q=${encodedQuery}`,
+      url: buildSearchUrl('https://www.premiumbeat.com/royalty-free-music', 'q', query),
       accentColor: "#0d9488",
       desc: "广播级影视广告品质"
     },
     {
       name: "Audio Network",
-      url: `https://www.audionetwork.com/browse/results?keywords=${encodedAudioNetQuery}`,
+      url: 'https://us.audionetwork.com/track/searchkeyword',
       accentColor: "#e11d48",
-      desc: "环球影视专用宏大配乐"
+      desc: "环球影视专用宏大配乐",
+      supportsDeepSearch: false,
     }
   ];
 
-  const sfxSites = [
+  const sfxSites: StockSite[] = [
     {
       name: "Freesound",
-      url: `https://freesound.org/search/?q=${encodedQuery}`,
+      url: buildSearchUrl('https://freesound.org/search/', 'q', query),
       accentColor: "#6366f1",
       desc: "全球最大免费音效社区"
     },
     {
       name: "Artlist SFX",
-      url: `https://artlist.io/sfx/search?terms=${encodedQuery}`,
+      url: buildSearchUrl('https://artlist.io/sfx/search', 'search', query),
       accentColor: "#eab308",
       desc: "影视物理环境实录音效"
     },
     {
       name: "Epidemic Sound",
-      url: `https://www.epidemicsound.com/sound-effects/search/?term=${encodedQuery}`,
+      url: buildSearchUrl('https://www.epidemicsound.com/sound-effects/', 'term', query),
       accentColor: "#f43f5e",
       desc: "多轨无缝拼接实声音效"
     },
     {
       name: "Splice",
-      url: `https://splice.com/sounds/search/samples?q=${encodedQuery}`,
+      url: buildSearchUrl('https://splice.com/sounds/search', 'q', query),
       accentColor: "#3b82f6",
       desc: "现代合成与质感拟音采样"
     }
@@ -114,7 +124,7 @@ const StockLinks: React.FC<StockLinksProps> = ({
             href={site.url}
             target="_blank"
             rel="noopener noreferrer"
-            title={`在 ${site.name} 搜索相似音频`}
+            title={site.supportsDeepSearch === false ? `打开 ${site.name} 搜索入口` : `在 ${site.name} 搜索相似音频`}
             style={{ '--brand-accent': site.accentColor } as React.CSSProperties}
             className={`flex items-center gap-1.5 bg-white/5 border border-white/5 hover:border-[var(--brand-accent)] text-xs px-3 py-1.5 rounded-full text-slate-300 hover:text-white transition-all duration-300 group`}
           >
@@ -140,6 +150,7 @@ const StockLinks: React.FC<StockLinksProps> = ({
           href={site.url}
           target="_blank"
           rel="noopener noreferrer"
+          title={site.supportsDeepSearch === false ? `打开 ${site.name} 搜索入口` : `在 ${site.name} 搜索相似音频`}
           style={{ '--brand-accent': site.accentColor } as React.CSSProperties}
           className={`
             bg-white/5 border border-white/5 hover:border-[var(--brand-accent)] text-white p-5 rounded-2xl transition-all duration-300 shadow-md hover:shadow-xl hover:-translate-y-1
