@@ -35,7 +35,7 @@ VITE_GEMINI_BASE_URL=https://cdn.12ai.org
 VITE_GEMINI_MODEL=gemini-3.5-flash
 VITE_GEMINI_MAX_UPLOAD_MB=30
 VITE_AUDIO_TARGET_UPLOAD_MB=12
-VITE_GEMINI_MAX_OUTPUT_TOKENS=12288
+VITE_GEMINI_MAX_OUTPUT_TOKENS=16384
 ```
 
 3. Run locally:
@@ -80,7 +80,7 @@ VITE_GEMINI_BASE_URL=https://cdn.12ai.org
 VITE_GEMINI_MODEL=gemini-3.5-flash
 VITE_GEMINI_MAX_UPLOAD_MB=30
 VITE_AUDIO_TARGET_UPLOAD_MB=12
-VITE_GEMINI_MAX_OUTPUT_TOKENS=12288
+VITE_GEMINI_MAX_OUTPUT_TOKENS=16384
 ```
 
 After GitHub is connected, every push to `main` triggers a production deployment. Pull
@@ -98,3 +98,4 @@ SonicLens prepares media in the browser before calling the API:
 - Large audio or WAV files are transcoded to mono WAV with a lower sample rate.
 - `VITE_AUDIO_TARGET_UPLOAD_MB` controls the target processed audio size.
 - `VITE_GEMINI_MAX_OUTPUT_TOKENS` controls the maximum model response length.
+- If a detailed structured response is truncated, SonicLens automatically retries with a compact schema.

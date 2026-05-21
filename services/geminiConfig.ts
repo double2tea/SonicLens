@@ -6,7 +6,7 @@ export const DEFAULT_GEMINI_BASE_URL = 'https://cdn.12ai.org';
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 export const DEFAULT_MAX_UPLOAD_MB = 30;
 export const DEFAULT_AUDIO_TARGET_UPLOAD_MB = 12;
-export const DEFAULT_MAX_OUTPUT_TOKENS = 12288;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
 
 export interface GeminiRuntimeConfig {
   apiKey?: string;

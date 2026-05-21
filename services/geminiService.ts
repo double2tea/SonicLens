@@ -39,52 +39,68 @@ interface GeminiGenerateContentResponse {
   };
 }
 
-const jsonOutputRules = `
-**JSON 输出硬约束**
-- 只返回一个 JSON object，不要 Markdown 代码块、解释文字或前后缀。
-- 为避免第三方 API 截断，所有字段必须紧凑但信息完整：中文长文本字段控制在 180 字以内，英文 prompt 控制在 90 词以内。
-- \`segments\` 最多 6 段，\`editorCuePoints\` 最多 6 个，\`similarTracks\` 最多 4 首。
-- 数组字段只保留最关键项目：\`keywords\`、\`mood\`、\`instruments\` 均最多 10 项。
-- 不要重复同一句分析；优先给结论和可执行剪辑信息。`;
+type AnalysisMode = 'music' | 'sfx';
+type AnalysisDetailLevel = 'full' | 'compact';
 
-const analysisSchema: GeminiSchema = {
+class TruncatedResponseError extends Error {
+  constructor() {
+    super('模型输出被截断，正在自动切换为紧凑结构重试。');
+  }
+}
+
+class InvalidJsonResponseError extends Error {
+  constructor() {
+    super('模型返回的 JSON 不完整或格式无效，正在自动重试。');
+  }
+}
+
+const sharedAnalysisProperties: Record<string, GeminiSchema> = {
+  type: {
+    type: 'STRING',
+    enum: ['music', 'sfx'],
+    description: 'Must match the requested analysis mode',
+  },
+  mood: {
+    type: 'ARRAY',
+    items: { type: 'STRING' },
+    description: '情绪形容词',
+  },
+  instruments: {
+    type: 'ARRAY',
+    items: { type: 'STRING' },
+    description: '乐器或声音来源',
+  },
+  educationalContext: { type: 'STRING', description: '流派科普或声音原理科普' },
+  keywords: {
+    type: 'ARRAY',
+    items: { type: 'STRING' },
+    description: '用于搜索的英文关键词 (English Search Keywords)',
+  },
+  optimizedPrompt: {
+    type: 'STRING',
+    description: '用于 AI 生成工具 (如 Suno, Udio, ElevenLabs) 的英文提示词',
+  },
+};
+
+const musicAnalysisSchema: GeminiSchema = {
   type: 'OBJECT',
   properties: {
+    ...sharedAnalysisProperties,
     type: {
       type: 'STRING',
-      enum: ['music', 'sfx'],
-      description: 'Must match the requested analysis mode',
+      enum: ['music'],
+      description: 'Must be music',
     },
-    mainGenre: { type: 'STRING', description: '音乐流派 (Music only)' },
+    mainGenre: { type: 'STRING', description: '音乐流派' },
     subGenres: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '次要流派 (Music only)',
+      description: '次要流派',
     },
-    bpm: { type: 'INTEGER', description: '整体平均 BPM (Music only)' },
-    timeSignature: { type: 'STRING', description: '拍号 (Music only)' },
-    key: { type: 'STRING', description: '整体调式 (Music only)' },
-    mood: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: '情绪形容词',
-    },
-    instruments: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: '乐器或声音来源',
-    },
-    rhythmDescription: { type: 'STRING', description: '节奏描述 (Music only)' },
-    educationalContext: { type: 'STRING', description: '流派科普或声音原理科普' },
-    keywords: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: '用于搜索的英文关键词 (English Search Keywords)',
-    },
-    optimizedPrompt: {
-      type: 'STRING',
-      description: '用于 AI 生成工具 (如 Suno, Udio, ElevenLabs) 的英文提示词',
-    },
+    bpm: { type: 'INTEGER', description: '整体平均 BPM' },
+    timeSignature: { type: 'STRING', description: '拍号' },
+    key: { type: 'STRING', description: '整体调式' },
+    rhythmDescription: { type: 'STRING', description: '节奏描述' },
     similarTracks: {
       type: 'ARRAY',
       items: {
@@ -95,7 +111,7 @@ const analysisSchema: GeminiSchema = {
         },
         required: ['artist', 'title'],
       },
-      description: '参考曲目 (Music only)',
+      description: '参考曲目',
     },
     sonicProfile: {
       type: 'OBJECT',
@@ -122,10 +138,10 @@ const analysisSchema: GeminiSchema = {
           mood: { type: 'STRING', description: '该片段的情绪' },
           description: {
             type: 'STRING',
-            description: '该片段的具体分析 (配器、节奏变化等)',
+            description: '该片段的具体分析',
           },
-          bpm: { type: 'INTEGER', description: '该片段的具体 BPM (如果节奏有变化)' },
-          key: { type: 'STRING', description: '该片段的具体调式 Key (如果转调了)' },
+          bpm: { type: 'INTEGER', description: '该片段的具体 BPM' },
+          key: { type: 'STRING', description: '该片段的具体调式 Key' },
           instruments: {
             type: 'ARRAY',
             items: { type: 'STRING' },
@@ -134,7 +150,7 @@ const analysisSchema: GeminiSchema = {
         },
         required: ['timestamp', 'genre', 'mood', 'description'],
       },
-      description: '时间轴分段分析 (Timeline Analysis) - 务必提供每段的详细 BPM, Key, Instruments',
+      description: '时间轴分段分析',
     },
     editorCuePoints: {
       type: 'ARRAY',
@@ -142,23 +158,26 @@ const analysisSchema: GeminiSchema = {
         type: 'OBJECT',
         properties: {
           timestamp: { type: 'STRING', description: "事件精确时间戳, e.g. '00:15'" },
-          eventName: {
-            type: 'STRING',
-            description: "卡点事件类型, e.g. '节奏高潮 (Drop)', '情感转折', '配器突变前奏'",
-          },
-          vibeChange: {
-            type: 'STRING',
-            description: "音乐氛围的变化, e.g. '强劲吉他与鼓组切入，节奏加快'",
-          },
-          visualAdvice: {
-            type: 'STRING',
-            description:
-              "对应的视频剪辑与画面转场建议, e.g. '适合动作对齐、快速连剪或画幅推近'",
-          },
+          eventName: { type: 'STRING', description: '卡点事件类型' },
+          vibeChange: { type: 'STRING', description: '音乐氛围的变化' },
+          visualAdvice: { type: 'STRING', description: '对应的视频剪辑与画面转场建议' },
         },
         required: ['timestamp', 'eventName', 'vibeChange', 'visualAdvice'],
       },
       description: '专为剪辑师设计的音视频画面卡点与转场对齐建议表',
+    },
+  },
+  required: ['type', 'keywords', 'educationalContext', 'instruments', 'mainGenre'],
+};
+
+const sfxAnalysisSchema: GeminiSchema = {
+  type: 'OBJECT',
+  properties: {
+    ...sharedAnalysisProperties,
+    type: {
+      type: 'STRING',
+      enum: ['sfx'],
+      description: 'Must be sfx',
     },
     sfx: {
       type: 'OBJECT',
@@ -169,11 +188,7 @@ const analysisSchema: GeminiSchema = {
         ucsSubCategory: { type: 'STRING', description: 'UCS SubCategory (e.g., Creak)' },
         foleyInstructions: { type: 'STRING', description: '如何使用日常物品拟音 (How to foley)' },
         accessibleAlternatives: { type: 'STRING', description: '生活中容易找到的相似声音来源' },
-        visualSyncTips: {
-          type: 'STRING',
-          description:
-            "音视频画面卡点与对齐建议, e.g. '脚步声建议与演员脚印画面对齐，由于延时，声音可比画面提前0.5-1帧以确保最佳同步感'",
-        },
+        visualSyncTips: { type: 'STRING', description: '音视频画面卡点与对齐建议' },
       },
       required: [
         'name',
@@ -186,10 +201,27 @@ const analysisSchema: GeminiSchema = {
       ],
     },
   },
-  required: ['type', 'keywords', 'educationalContext', 'instruments'],
+  required: ['type', 'keywords', 'educationalContext', 'instruments', 'sfx'],
 };
 
-const buildSystemPrompt = (mode: 'music' | 'sfx'): string => {
+const getAnalysisSchema = (mode: AnalysisMode): GeminiSchema =>
+  mode === 'music' ? musicAnalysisSchema : sfxAnalysisSchema;
+
+const jsonOutputRules = (detailLevel: AnalysisDetailLevel): string => detailLevel === 'compact' ? `
+**JSON 输出硬约束**
+- 只返回一个 JSON object，不要 Markdown 代码块、解释文字或前后缀。
+- 当前是自动紧凑重试：必须优先返回完整合法 JSON，不要追求长篇分析。
+- 中文长文本字段控制在 90 字以内，英文 prompt 控制在 45 词以内。
+- \`segments\` 最多 3 段，\`editorCuePoints\` 最多 4 个，\`similarTracks\` 最多 2 首。
+- \`keywords\`、\`mood\`、\`instruments\` 均最多 6 项。` : `
+**JSON 输出硬约束**
+- 只返回一个 JSON object，不要 Markdown 代码块、解释文字或前后缀。
+- 为避免第三方 API 截断，所有字段必须紧凑但信息完整：中文长文本字段控制在 180 字以内，英文 prompt 控制在 90 词以内。
+- \`segments\` 最多 6 段，\`editorCuePoints\` 最多 6 个，\`similarTracks\` 最多 4 首。
+- 数组字段只保留最关键项目：\`keywords\`、\`mood\`、\`instruments\` 均最多 10 项。
+- 不要重复同一句分析；优先给结论和可执行剪辑信息。`;
+
+const buildSystemPrompt = (mode: AnalysisMode, detailLevel: AnalysisDetailLevel): string => {
   if (mode === 'music') {
     return `请作为一位拥有资深行业直觉的顶级银幕音乐总监（Music Supervisor）及资深音频工程师，对输入的音频/视频文件运行微观级**音乐**特性分析。
 
@@ -221,7 +253,7 @@ const buildSystemPrompt = (mode: 'music' | 'sfx'): string => {
 - \`vibeChange\`: 描述声学环境与动态压力的瞬时改变听感（例如 "电声声部全数淡出，仅保留无混响干声 Rhodes 钢琴，呈现窒息感"）。
 - \`visualAdvice\`: 专为剪辑师设计的黄金剪辑转场策略（例如 "此点最宜作为画中人物眼神特写或急促物理撞击动作的卡点；建议使用跳接(Jump Cut)或物理变速慢动作(Speed Ramp)启动，突出宿命感"）。
 
-${jsonOutputRules}
+${jsonOutputRules(detailLevel)}
 
 请直接返回满足 analysisSchema Schema 的 JSON 结果。非英文部分的文本请用纯简体中文书写，Keywords 和 similarTracks 以及 optimizedPrompt 必须为专业英文。`;
   }
@@ -241,7 +273,7 @@ ${jsonOutputRules}
 - 声学空间与声道细节 (e.g., dry mono close-up recording, intimate studio microphone, binaural panning)
 - 瞬态和频率调节 (e.g., explosive hard impact transient with rapid muffled decay)
 
-${jsonOutputRules}
+${jsonOutputRules(detailLevel)}
 
 请直接返回满足 analysisSchema Schema 的 JSON 结果。非英文部分的文本请用纯简体中文书写，Keywords 和 optimizedPrompt 必须为专业英文。`;
 };
@@ -278,7 +310,7 @@ const buildGenerateContentUrl = (baseUrl: string, model: string, apiKey: string)
 const getResponseText = (payload: GeminiGenerateContentResponse): string => {
   const candidate = payload.candidates?.[0];
   if (candidate?.finishReason === 'MAX_TOKENS') {
-    throw new Error('模型输出被截断。请换用输出额度更高的模型，或上传更短的音视频片段后重试。');
+    throw new TruncatedResponseError();
   }
 
   const text = candidate?.content?.parts?.find((part) => part.text)?.text;
@@ -290,9 +322,17 @@ const getResponseText = (payload: GeminiGenerateContentResponse): string => {
 
 const normalizeJsonText = (text: string): string => {
   const trimmed = text.trim();
-  if (!trimmed.startsWith('```')) return trimmed;
+  const withoutFence = trimmed.startsWith('```')
+    ? trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    : trimmed;
+  const firstBrace = withoutFence.indexOf('{');
+  const lastBrace = withoutFence.lastIndexOf('}');
 
-  return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return withoutFence.slice(firstBrace, lastBrace + 1);
+  }
+
+  return withoutFence;
 };
 
 const parseAnalysisJson = (text: string): Partial<MusicAnalysisResult> => {
@@ -300,7 +340,7 @@ const parseAnalysisJson = (text: string): Partial<MusicAnalysisResult> => {
     return JSON.parse(normalizeJsonText(text)) as Partial<MusicAnalysisResult>;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error('模型返回的 JSON 不完整或格式无效。请重试；如果仍出现该错误，请上传更短片段或切换模型。');
+      throw new InvalidJsonResponseError();
     }
     throw error;
   }
@@ -323,12 +363,13 @@ const readErrorMessage = (payload: unknown, fallback: string): string => {
 
 export const analyzeMusicMedia = async (
   file: File,
-  mode: 'music' | 'sfx'
+  mode: AnalysisMode
 ): Promise<MusicAnalysisResult> => {
   const config = getGeminiRuntimeConfig();
   if (!config.apiKey) {
     throw new Error('API Key 未配置。请在设置中填入 12AI/Gemini API Key。');
   }
+  const apiKey = config.apiKey;
 
   const maxFileSizeBytes = config.maxUploadMb * 1024 * 1024;
   if (file.size > maxFileSizeBytes) {
@@ -337,43 +378,73 @@ export const analyzeMusicMedia = async (
 
   const base64Data = await toBase64(file);
   const mimeType = file.type || 'audio/mpeg';
-  const parts: Array<GeminiTextPart | GeminiInlineDataPart> = [
-    { text: buildSystemPrompt(mode) },
-    {
-      inlineData: {
-        mimeType,
-        data: base64Data,
-      },
-    },
-  ];
 
-  const response = await fetch(buildGenerateContentUrl(config.baseUrl, config.model, config.apiKey), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts,
+  const requestAnalysis = async (
+    detailLevel: AnalysisDetailLevel
+  ): Promise<Partial<MusicAnalysisResult>> => {
+    const parts: Array<GeminiTextPart | GeminiInlineDataPart> = [
+      { text: buildSystemPrompt(mode, detailLevel) },
+      {
+        inlineData: {
+          mimeType,
+          data: base64Data,
         },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: analysisSchema,
-        temperature: 0.2,
-        maxOutputTokens: config.maxOutputTokens,
       },
-    }),
-  });
+    ];
 
-  const payload = (await response.json()) as GeminiGenerateContentResponse;
-  if (!response.ok) {
-    throw new Error(readErrorMessage(payload, `Gemini API 请求失败：HTTP ${response.status}`));
+    const response = await fetch(buildGenerateContentUrl(config.baseUrl, config.model, apiKey), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts,
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: getAnalysisSchema(mode),
+          temperature: detailLevel === 'compact' ? 0 : 0.2,
+          maxOutputTokens: detailLevel === 'compact' ? 8192 : config.maxOutputTokens,
+        },
+      }),
+    });
+
+    const payload = (await response.json()) as GeminiGenerateContentResponse;
+    if (!response.ok) {
+      throw new Error(readErrorMessage(payload, `Gemini API 请求失败：HTTP ${response.status}`));
+    }
+
+    return parseAnalysisJson(getResponseText(payload));
+  };
+
+  let parsed: Partial<MusicAnalysisResult>;
+  try {
+    parsed = await requestAnalysis('full');
+  } catch (error) {
+    if (
+      !(error instanceof TruncatedResponseError) &&
+      !(error instanceof InvalidJsonResponseError)
+    ) {
+      throw error;
+    }
+
+    try {
+      parsed = await requestAnalysis('compact');
+    } catch (retryError) {
+      if (
+        retryError instanceof TruncatedResponseError ||
+        retryError instanceof InvalidJsonResponseError
+      ) {
+        throw new Error('模型连续返回不完整 JSON。已自动切换紧凑结构重试但仍失败，请上传更短片段或切换模型。');
+      }
+      throw retryError;
+    }
   }
 
-  const parsed = parseAnalysisJson(getResponseText(payload));
   return {
     ...parsed,
     type: mode,
