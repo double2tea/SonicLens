@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --color-bg: #07080a;
+  --color-accent: #f97316; /* Refined titanium copper-orange */
+  --glass-surface: rgba(18, 20, 26, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.04);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #060709;
+  color: #f1f5f9;
+}
+
+/* Atmospheric background—layered premium gold/slate gradients */
+.atmosphere {
+  background:
+    radial-gradient(circle at 50% -10%, rgba(249, 115, 22, 0.06) 0%, transparent 60%),
+    radial-gradient(circle at 5% 50%, rgba(56, 189, 248, 0.02) 0%, transparent 40%),
+    radial-gradient(circle at 95% 80%, rgba(249, 115, 22, 0.02) 0%, transparent 40%);
+  filter: blur(80px);
+  opacity: 1.0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Glass morphism player chrome */
+.glass-panel {
+  background: var(--glass-surface);
+  backdrop-filter: blur(40px);
+  border-radius: 16px; /* High-grade luxury tight corner radius */
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2); 
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2); 
+}

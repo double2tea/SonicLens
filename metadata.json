@@ -1,0 +1,5 @@
+{
+  "name": "Remix: SonicLens - Music Analysis for Editors",
+  "description": "An AI-powered tool for video editors to analyze music tracks (audio only), understand genres, and find similar stock music on Musicbed, Artlist, and more.",
+  "requestFramePermissions": []
+}
