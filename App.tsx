@@ -1,6 +1,28 @@
 import React, { useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Music, Activity, Clock, Disc, FileAudio, Info, Mic2, AlertTriangle, Loader2, ListMusic, ExternalLink, Sparkles, Hammer, Tag, Volume2, Layers, PlayCircle, RotateCcw as RotateCcwIcon, Search, Settings } from 'lucide-react';
+import {
+  Music,
+  Activity,
+  Clock,
+  Disc,
+  FileAudio,
+  Info,
+  Mic2,
+  AlertTriangle,
+  Loader2,
+  ListMusic,
+  ExternalLink,
+  Sparkles,
+  Hammer,
+  Tag,
+  Volume2,
+  Layers,
+  PlayCircle,
+  RotateCcw as RotateCcwIcon,
+  Search,
+  Settings,
+  History,
+} from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import AnalysisVisualizer from './components/AnalysisVisualizer';
 import StockLinks from './components/StockLinks';
@@ -13,6 +35,8 @@ import { analyzeMusicMedia } from './services/geminiService';
 import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig';
 import { prepareAudioForAnalysis } from './services/audioUtils';
 import type { AudioPreparationResult } from './services/audioUtils';
+import { ANALYSIS_HISTORY_LIMIT, cacheAnalysisHistoryItem, loadAnalysisHistory } from './services/analysisHistory';
+import type { AnalysisHistoryItem } from './services/analysisHistory';
 import { AnalysisState } from './types';
 import type { MusicAnalysisResult } from './types';
 
@@ -46,13 +70,32 @@ const describePreparedFile = (result: AudioPreparationResult): string => {
   return `已本地转码压缩：${formatBytes(result.originalBytes)} -> ${formatBytes(result.processedBytes)}，${result.sampleRate / 1000}kHz 单声道 WAV`;
 };
 
+const formatHistoryTime = (value: string): string => (
+  new Date(value).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+);
+
+const getHistoryTitle = (item: AnalysisHistoryItem): string => {
+  if (item.analysis.type === 'sfx') return item.analysis.sfx?.name || '音效分析';
+  return item.analysis.mainGenre || '音乐分析';
+};
+
 function App() {
   const [file, setFile] = useState<File | null>(null);
+  const [activeFileName, setActiveFileName] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MusicAnalysisResult | null>(null);
   const [status, setStatus] = useState<AnalysisState>(AnalysisState.IDLE);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysisMode, setAnalysisMode] = useState<'music' | 'sfx'>('music');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>(() => loadAnalysisHistory());
+  const [historyNotice, setHistoryNotice] = useState(
+    `历史分析会保存在当前浏览器，最多保留 ${ANALYSIS_HISTORY_LIMIT} 条，不包含音频原文件。`
+  );
   const [processingTitle, setProcessingTitle] = useState('');
   const [processingDetail, setProcessingDetail] = useState('');
   const [processingSummary, setProcessingSummary] = useState('');
@@ -64,6 +107,7 @@ function App() {
 
   const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
+    setActiveFileName(selectedFile.name);
     setAnalysis(null);
     setErrorMsg(null);
     setProcessingSummary('');
@@ -80,8 +124,9 @@ function App() {
         },
       });
       const fileToAnalyze = preparedAudio.file;
+      const preparedSummary = describePreparedFile(preparedAudio);
       setFile(fileToAnalyze);
-      setProcessingSummary(describePreparedFile(preparedAudio));
+      setProcessingSummary(preparedSummary);
       setProcessingTitle('正在上传并分析');
       setProcessingDetail('只上传处理后的分析音频，模型正在识别节奏、音色、段落与剪辑卡点。');
       setStatus(AnalysisState.ANALYZING);
@@ -89,6 +134,20 @@ function App() {
       const result = await analyzeMusicMedia(fileToAnalyze, analysisMode);
       setAnalysis(result);
       setStatus(AnalysisState.COMPLETE);
+
+      try {
+        const nextHistory = cacheAnalysisHistoryItem({
+          fileName: selectedFile.name,
+          fileSize: selectedFile.size,
+          analysisMode,
+          processingSummary: preparedSummary,
+          analysis: result,
+        });
+        setAnalysisHistory(nextHistory);
+        setHistoryNotice(`已缓存本次分析结果：${nextHistory.length}/${ANALYSIS_HISTORY_LIMIT} 条，超出后自动移除最旧记录。`);
+      } catch (cacheError: unknown) {
+        setHistoryNotice(`分析已完成，但本地历史缓存失败：${getErrorMessage(cacheError, '浏览器存储不可用。')}`);
+      }
     } catch (err: unknown) {
       console.error(err);
       setStatus(AnalysisState.ERROR);
@@ -98,11 +157,25 @@ function App() {
 
   const handleReset = () => {
     setFile(null);
+    setActiveFileName(null);
     setAnalysis(null);
     setProcessingSummary('');
     setProcessingTitle('');
     setProcessingDetail('');
     setStatus(AnalysisState.IDLE);
+  };
+
+  const handleRestoreHistory = (item: AnalysisHistoryItem) => {
+    setFile(null);
+    setActiveFileName(item.fileName);
+    setAnalysisMode(item.analysisMode);
+    setAnalysis(item.analysis);
+    setProcessingSummary(item.processingSummary);
+    setProcessingTitle('');
+    setProcessingDetail('');
+    setErrorMsg(null);
+    setStatus(AnalysisState.COMPLETE);
+    setHistoryNotice(`已载入历史分析：${item.fileName}。历史缓存不包含音频原文件，播放器需重新上传。`);
   };
 
   // Parses "MM:SS" string to seconds
@@ -143,8 +216,8 @@ function App() {
           </div>
           
           <div className="flex items-center gap-4">
-             {status === AnalysisState.COMPLETE && analysis && file && (
-               <ExportMenu analysis={analysis} fileName={file.name} contentRef={resultsRef} />
+             {status === AnalysisState.COMPLETE && analysis && activeFileName && (
+               <ExportMenu analysis={analysis} fileName={activeFileName} contentRef={resultsRef} />
              )}
              
              <button 
@@ -223,6 +296,52 @@ function App() {
             </div>
 
             <FileUpload onFileSelect={handleFileSelect} disabled={false} mode={analysisMode} />
+
+            <div className="glass-panel p-5 mt-8">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <History size={16} className="text-[var(--color-accent)]" />
+                    历史分析
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">{historyNotice}</p>
+                </div>
+                <span className="text-xs font-mono text-slate-500 bg-white/5 px-2 py-1 rounded-md">
+                  {analysisHistory.length}/{ANALYSIS_HISTORY_LIMIT}
+                </span>
+              </div>
+
+              {analysisHistory.length > 0 ? (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {analysisHistory.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => handleRestoreHistory(item)}
+                      className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/5 hover:border-[var(--color-accent)]/40 rounded-xl p-3 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-100 truncate">{item.fileName}</span>
+                            <span className="text-[10px] uppercase text-slate-300 bg-black/30 border border-white/10 px-1.5 py-0.5 rounded">
+                              {item.analysisMode}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">
+                            {getHistoryTitle(item)} · {formatBytes(item.fileSize)} · {formatHistoryTime(item.createdAt)}
+                          </div>
+                        </div>
+                        <ExternalLink size={14} className="text-slate-500 flex-shrink-0" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500 bg-black/20 rounded-xl px-4 py-3">
+                  完成一次分析后，会自动缓存到这里。
+                </p>
+              )}
+            </div>
           </motion.div>
         )}
 
@@ -283,7 +402,7 @@ function App() {
             {file && (
                 <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 glass-panel text-sm text-slate-400">
                     <FileAudio size={14} />
-                    <span className="truncate max-w-[200px]">{file.name}</span>
+                    <span className="truncate max-w-[200px]">{activeFileName || file.name}</span>
                 </div>
             )}
           </motion.div>
@@ -318,6 +437,10 @@ function App() {
             transition={{ duration: 0.7 }}
             ref={resultsRef}
           >
+            <div className="glass-panel p-4 mb-6 flex items-center gap-3 text-sm text-slate-300">
+              <Info size={16} className="text-[var(--color-accent)] flex-shrink-0" />
+              <span>{historyNotice}</span>
+            </div>
             
             {/* Top Bar: Player & Primary Info */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
@@ -359,7 +482,7 @@ function App() {
                           <h2 className="text-3xl font-bold text-white mb-1">音乐分析报告</h2>
                       )}
 
-                      <p className="text-slate-400 text-sm font-mono truncate max-w-md mt-2">{file?.name}</p>
+                      <p className="text-slate-400 text-sm font-mono truncate max-w-md mt-2">{activeFileName}</p>
                       {processingSummary && (
                         <p className="text-xs text-emerald-300 mt-2">{processingSummary}</p>
                       )}
@@ -370,6 +493,12 @@ function App() {
                 {file && (
                     <div className="mb-8" data-html2canvas-ignore="true">
                         <WaveformPlayer ref={playerRef} file={file} autoPlay={false} />
+                    </div>
+                )}
+                {!file && activeFileName && (
+                    <div className="mb-8 glass-panel p-4 text-sm text-slate-400 flex items-center gap-2" data-html2canvas-ignore="true">
+                        <Info size={15} className="text-[var(--color-accent)] flex-shrink-0" />
+                        <span>这是历史缓存结果，仅保存分析报告和文件信息；如需波形播放，请重新上传原音频。</span>
                     </div>
                 )}
 
