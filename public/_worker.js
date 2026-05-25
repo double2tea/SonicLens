@@ -30,6 +30,10 @@ const optionalBoolean = (value) => (
   typeof value === 'boolean' ? value : undefined
 );
 
+const jsonError = (message, status) => (
+  Response.json({ error: message }, { status })
+);
+
 const parseUsageEvent = (value) => {
   if (!isRecord(value)) return null;
   if (!isUsageEventName(value.eventName)) return null;
@@ -50,24 +54,23 @@ const parseUsageEvent = (value) => {
   };
 };
 
-export async function onRequestPost(context) {
-  if (!context.env.SONICLENS_ANALYTICS) {
-    return Response.json({ error: 'Analytics Engine binding is not configured.' }, { status: 503 });
+const handleAnalytics = async (request, env) => {
+  if (request.method !== 'POST') return new Response(null, { status: 405 });
+  if (!env.SONICLENS_ANALYTICS) {
+    return jsonError('Analytics Engine binding is not configured.', 503);
   }
 
   let parsedBody;
   try {
-    parsedBody = await context.request.json();
+    parsedBody = await request.json();
   } catch {
-    return Response.json({ error: 'Invalid JSON body.' }, { status: 400 });
+    return jsonError('Invalid JSON body.', 400);
   }
 
   const event = parseUsageEvent(parsedBody);
-  if (!event) {
-    return Response.json({ error: 'Invalid analytics event.' }, { status: 400 });
-  }
+  if (!event) return jsonError('Invalid analytics event.', 400);
 
-  context.env.SONICLENS_ANALYTICS.writeDataPoint({
+  env.SONICLENS_ANALYTICS.writeDataPoint({
     indexes: [event.mode],
     blobs: [
       event.eventName,
@@ -85,4 +88,12 @@ export async function onRequestPost(context) {
   });
 
   return new Response(null, { status: 204 });
-}
+};
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/analytics') return handleAnalytics(request, env);
+    return env.ASSETS.fetch(request);
+  },
+};
