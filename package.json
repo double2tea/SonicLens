@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "type-check": "tsc --noEmit",
-    "build": "vite build && wrangler pages functions build --outdir=dist/_worker.js/",
+    "build": "vite build && npm run build:functions",
+    "build:functions": "wrangler pages functions build --outdir=dist/_worker-build && node -e \"const fs=require('fs');fs.renameSync('dist/_worker-build/index.js','dist/_worker.js');fs.rmSync('dist/_worker-build',{recursive:true,force:true});\"",
     "preview": "vite preview"
   },
   "dependencies": {
