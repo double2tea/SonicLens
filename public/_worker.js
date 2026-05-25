@@ -54,11 +54,8 @@ const parseUsageEvent = (value) => {
   };
 };
 
-const handleAnalytics = async (request, env) => {
+const handleAnalytics = async (request) => {
   if (request.method !== 'POST') return new Response(null, { status: 405 });
-  if (!env.SONICLENS_ANALYTICS) {
-    return jsonError('Analytics Engine binding is not configured.', 503);
-  }
 
   let parsedBody;
   try {
@@ -69,31 +66,13 @@ const handleAnalytics = async (request, env) => {
 
   const event = parseUsageEvent(parsedBody);
   if (!event) return jsonError('Invalid analytics event.', 400);
-
-  env.SONICLENS_ANALYTICS.writeDataPoint({
-    indexes: [event.mode],
-    blobs: [
-      event.eventName,
-      event.mode,
-      event.originalSizeBucket,
-      event.processedSizeBucket ?? '',
-      event.wasTranscoded === undefined ? '' : String(event.wasTranscoded),
-      event.model ?? '',
-      event.errorMessage ?? '',
-    ],
-    doubles: [
-      event.durationMs ?? 0,
-      1,
-    ],
-  });
-
   return new Response(null, { status: 204 });
 };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/api/analytics') return handleAnalytics(request, env);
+    if (url.pathname.startsWith('/api/analytics')) return handleAnalytics(request);
     return env.ASSETS.fetch(request);
   },
 };

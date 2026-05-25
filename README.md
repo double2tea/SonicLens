@@ -90,17 +90,16 @@ After GitHub is connected, every push to `main` triggers a production deployment
 requests or non-production branches can be configured as preview deployments in Cloudflare
 Pages.
 
-`wrangler.toml` also configures the Pages Functions output directory and Analytics Engine
-binding used by `/api/analytics`.
+`wrangler.toml` also configures the Pages Functions output directory used by `/api/analytics`.
 
 `VITE_*` values are embedded in the browser bundle by Vite, so use a restricted API key
 suitable for browser-side requests.
 
 ## Usage Analytics
 
-SonicLens sends anonymous usage events to the Cloudflare Pages Function at `/api/analytics`.
-The function writes to the Workers Analytics Engine dataset `soniclens_usage` through the
-`SONICLENS_ANALYTICS` binding.
+SonicLens sends anonymous usage events to Cloudflare Pages Function paths under
+`/api/analytics/:event/:mode/:sizeBucket`. These paths let Cloudflare count analysis usage
+through request and Function analytics without receiving audio or analysis content.
 
 Tracked events:
 
@@ -111,6 +110,10 @@ Tracked events:
 Tracked fields are intentionally limited to mode, file size bucket, processed file size
 bucket, duration, transcode flag, model, and short error message. SonicLens does not send
 audio files, filenames, prompts, API keys, or analysis results to analytics.
+
+For richer SQL-style aggregation, enable Workers Analytics Engine in the Cloudflare account,
+then add an Analytics Engine binding named `SONICLENS_ANALYTICS` and write events from
+`public/_worker.js`.
 
 Local Pages Function smoke test:
 

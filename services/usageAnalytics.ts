@@ -12,7 +12,12 @@ export interface UsageEvent {
   errorMessage?: string;
 }
 
-const ANALYTICS_ENDPOINT = '/api/analytics';
+const buildAnalyticsEndpoint = (event: UsageEvent): string => {
+  const eventName = encodeURIComponent(event.eventName);
+  const mode = encodeURIComponent(event.mode);
+  const sizeBucket = encodeURIComponent(event.originalSizeBucket);
+  return `/api/analytics/${eventName}/${mode}/${sizeBucket}`;
+};
 
 export const getFileSizeBucket = (bytes: number): string => {
   const mb = bytes / 1024 / 1024;
@@ -25,17 +30,18 @@ export const getFileSizeBucket = (bytes: number): string => {
 export const trackUsageEvent = (event: UsageEvent): void => {
   if (import.meta.env.DEV) return;
 
+  const endpoint = buildAnalyticsEndpoint(event);
   const body = JSON.stringify(event);
 
   if (navigator.sendBeacon) {
     const queued = navigator.sendBeacon(
-      ANALYTICS_ENDPOINT,
+      endpoint,
       new Blob([body], { type: 'application/json' })
     );
     if (queued) return;
   }
 
-  void fetch(ANALYTICS_ENDPOINT, {
+  void fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
