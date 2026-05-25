@@ -1,73 +1,42 @@
-type UsageEventName = 'analysis_started' | 'analysis_completed' | 'analysis_failed';
-type UsageAnalysisMode = 'music' | 'sfx';
-
-interface AnalyticsDataPoint {
-  indexes: string[];
-  blobs: string[];
-  doubles: number[];
-}
-
-interface AnalyticsEngineDataset {
-  writeDataPoint: (dataPoint: AnalyticsDataPoint) => void;
-}
-
-interface Env {
-  SONICLENS_ANALYTICS?: AnalyticsEngineDataset;
-}
-
-interface PagesContext {
-  request: Request;
-  env: Env;
-}
-
-interface UsageEvent {
-  eventName: UsageEventName;
-  mode: UsageAnalysisMode;
-  originalSizeBucket: string;
-  processedSizeBucket?: string;
-  durationMs?: number;
-  wasTranscoded?: boolean;
-  model?: string;
-  errorMessage?: string;
-}
-
-const EVENT_NAMES: UsageEventName[] = [
+const EVENT_NAMES = [
   'analysis_started',
   'analysis_completed',
   'analysis_failed',
 ];
 
-const ANALYSIS_MODES: UsageAnalysisMode[] = ['music', 'sfx'];
+const ANALYSIS_MODES = ['music', 'sfx'];
 
-const isRecord = (value: unknown): value is Record<string, unknown> => (
+const isRecord = (value) => (
   typeof value === 'object' && value !== null
 );
 
-const isUsageEventName = (value: unknown): value is UsageEventName => (
-  typeof value === 'string' && EVENT_NAMES.some((eventName) => eventName === value)
+const isUsageEventName = (value) => (
+  typeof value === 'string' && EVENT_NAMES.includes(value)
 );
 
-const isUsageAnalysisMode = (value: unknown): value is UsageAnalysisMode => (
-  typeof value === 'string' && ANALYSIS_MODES.some((mode) => mode === value)
+const isUsageAnalysisMode = (value) => (
+  typeof value === 'string' && ANALYSIS_MODES.includes(value)
 );
 
-const optionalString = (value: unknown): string | undefined => (
+const optionalString = (value) => (
   typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : undefined
 );
 
-const optionalNumber = (value: unknown): number | undefined => (
+const optionalNumber = (value) => (
   typeof value === 'number' && Number.isFinite(value) ? value : undefined
 );
 
-const optionalBoolean = (value: unknown): boolean | undefined => (
+const optionalBoolean = (value) => (
   typeof value === 'boolean' ? value : undefined
 );
 
-const parseUsageEvent = (value: unknown): UsageEvent | null => {
+const parseUsageEvent = (value) => {
   if (!isRecord(value)) return null;
   if (!isUsageEventName(value.eventName)) return null;
   if (!isUsageAnalysisMode(value.mode)) return null;
-  if (typeof value.originalSizeBucket !== 'string' || !value.originalSizeBucket.trim()) return null;
+  if (typeof value.originalSizeBucket !== 'string' || !value.originalSizeBucket.trim()) {
+    return null;
+  }
 
   return {
     eventName: value.eventName,
@@ -81,12 +50,12 @@ const parseUsageEvent = (value: unknown): UsageEvent | null => {
   };
 };
 
-export const onRequestPost = async (context: PagesContext): Promise<Response> => {
+export async function onRequestPost(context) {
   if (!context.env.SONICLENS_ANALYTICS) {
     return Response.json({ error: 'Analytics Engine binding is not configured.' }, { status: 503 });
   }
 
-  let parsedBody: unknown;
+  let parsedBody;
   try {
     parsedBody = await context.request.json();
   } catch {
@@ -116,4 +85,4 @@ export const onRequestPost = async (context: PagesContext): Promise<Response> =>
   });
 
   return new Response(null, { status: 204 });
-};
+}
