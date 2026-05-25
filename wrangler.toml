@@ -1,0 +1,7 @@
+name = "soniclens"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-04-16"
+
+[[analytics_engine_datasets]]
+binding = "SONICLENS_ANALYTICS"
+dataset = "soniclens_usage"

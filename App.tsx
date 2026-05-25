@@ -37,6 +37,7 @@ import { prepareAudioForAnalysis } from './services/audioUtils';
 import type { AudioPreparationResult } from './services/audioUtils';
 import { ANALYSIS_HISTORY_LIMIT, cacheAnalysisHistoryItem, loadAnalysisHistory } from './services/analysisHistory';
 import type { AnalysisHistoryItem } from './services/analysisHistory';
+import { getFileSizeBucket, trackUsageEvent } from './services/usageAnalytics';
 import { AnalysisState } from './types';
 import type { MusicAnalysisResult } from './types';
 
@@ -162,8 +163,17 @@ function App() {
     setProcessingSummary('');
     setStatus(AnalysisState.CONVERTING);
 
+    const analysisStartedAt = performance.now();
+    const originalSizeBucket = getFileSizeBucket(selectedFile.size);
+    const config = getGeminiRuntimeConfig();
+    trackUsageEvent({
+      eventName: 'analysis_started',
+      mode: analysisMode,
+      originalSizeBucket,
+      model: config.model,
+    });
+
     try {
-      const config = getGeminiRuntimeConfig();
       const targetUploadMb = Math.min(config.audioTargetUploadMb, config.maxUploadMb);
       const preparedAudio = await prepareAudioForAnalysis(selectedFile, {
         maxBytes: targetUploadMb * 1024 * 1024,
@@ -183,6 +193,15 @@ function App() {
       const result = await analyzeMusicMedia(fileToAnalyze, analysisMode);
       setAnalysis(result);
       setStatus(AnalysisState.COMPLETE);
+      trackUsageEvent({
+        eventName: 'analysis_completed',
+        mode: analysisMode,
+        originalSizeBucket,
+        processedSizeBucket: getFileSizeBucket(preparedAudio.processedBytes),
+        durationMs: Math.round(performance.now() - analysisStartedAt),
+        wasTranscoded: preparedAudio.wasTranscoded,
+        model: config.model,
+      });
 
       try {
         const nextHistory = cacheAnalysisHistoryItem({
@@ -199,8 +218,17 @@ function App() {
       }
     } catch (err: unknown) {
       console.error(err);
+      const message = getErrorMessage(err, "分析文件失败。");
+      trackUsageEvent({
+        eventName: 'analysis_failed',
+        mode: analysisMode,
+        originalSizeBucket,
+        durationMs: Math.round(performance.now() - analysisStartedAt),
+        model: config.model,
+        errorMessage: message,
+      });
       setStatus(AnalysisState.ERROR);
-      setErrorMsg(getErrorMessage(err, "分析文件失败。"));
+      setErrorMsg(message);
     }
   };
 
