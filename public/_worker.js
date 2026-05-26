@@ -34,6 +34,22 @@ const jsonError = (message, status) => (
   Response.json({ error: message }, { status })
 );
 
+const writeUsageEvent = (analytics, event) => {
+  analytics.writeDataPoint({
+    blobs: [
+      event.eventName,
+      event.mode,
+      event.originalSizeBucket,
+      event.processedSizeBucket ?? '',
+      event.wasTranscoded === undefined ? '' : String(event.wasTranscoded),
+      event.model ?? '',
+      event.errorMessage ?? '',
+    ],
+    doubles: [event.durationMs ?? 0],
+    indexes: [`${event.eventName}:${event.mode}`],
+  });
+};
+
 const parseUsageEvent = (value) => {
   if (!isRecord(value)) return null;
   if (!isUsageEventName(value.eventName)) return null;
@@ -54,7 +70,7 @@ const parseUsageEvent = (value) => {
   };
 };
 
-const handleAnalytics = async (request) => {
+const handleAnalytics = async (request, env) => {
   if (request.method !== 'POST') return new Response(null, { status: 405 });
 
   let parsedBody;
@@ -66,13 +82,14 @@ const handleAnalytics = async (request) => {
 
   const event = parseUsageEvent(parsedBody);
   if (!event) return jsonError('Invalid analytics event.', 400);
+  writeUsageEvent(env.SONICLENS_ANALYTICS, event);
   return new Response(null, { status: 204 });
 };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/api/analytics')) return handleAnalytics(request);
+    if (url.pathname.startsWith('/api/analytics')) return handleAnalytics(request, env);
     return env.ASSETS.fetch(request);
   },
 };

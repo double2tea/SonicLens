@@ -90,16 +90,17 @@ After GitHub is connected, every push to `main` triggers a production deployment
 requests or non-production branches can be configured as preview deployments in Cloudflare
 Pages.
 
-`wrangler.toml` also configures the Pages Functions output directory used by `/api/analytics`.
+`wrangler.toml` also configures the Pages Functions output directory and the Analytics
+Engine dataset binding used by `/api/analytics`.
 
 `VITE_*` values are embedded in the browser bundle by Vite, so use a restricted API key
 suitable for browser-side requests.
 
 ## Usage Analytics
 
-SonicLens sends anonymous usage events to Cloudflare Pages Function paths under
-`/api/analytics/:event/:mode/:sizeBucket`. These paths let Cloudflare count analysis usage
-through request and Function analytics without receiving audio or analysis content.
+SonicLens sends anonymous usage events to `/api/analytics/:event/:mode/:sizeBucket`.
+The Pages Function validates each event and writes it to the Cloudflare Workers Analytics
+Engine dataset `soniclens`.
 
 Tracked events:
 
@@ -111,9 +112,31 @@ Tracked fields are intentionally limited to mode, file size bucket, processed fi
 bucket, duration, transcode flag, model, and short error message. SonicLens does not send
 audio files, filenames, prompts, API keys, or analysis results to analytics.
 
-For richer SQL-style aggregation, enable Workers Analytics Engine in the Cloudflare account,
-then add an Analytics Engine binding named `SONICLENS_ANALYTICS` and write events from
-`public/_worker.js`.
+Analytics Engine columns:
+
+- `blob1`: event name
+- `blob2`: mode
+- `blob3`: original file size bucket
+- `blob4`: processed file size bucket
+- `blob5`: transcode flag
+- `blob6`: model
+- `blob7`: short error message
+- `double1`: duration in milliseconds
+
+Example weekly query:
+
+```sql
+SELECT
+  blob1 AS event_name,
+  blob2 AS mode,
+  blob3 AS original_size_bucket,
+  COUNT() AS events,
+  AVG(double1) AS average_duration_ms
+FROM soniclens
+WHERE timestamp >= NOW() - INTERVAL '7' DAY
+GROUP BY event_name, mode, original_size_bucket
+ORDER BY events DESC
+```
 
 Local Pages Function smoke test:
 
