@@ -42,6 +42,7 @@ import { AnalysisState } from './types';
 import type { MusicAnalysisResult } from './types';
 
 const API_KEY_REGISTER_URL = 'https://new.12ai.org/register?aff=PYE8';
+const IMAGINE_WORKBENCH_URL = 'https://imagine-workbench.pages.dev/';
 
 // Stat Card Component Helper
 const StatCard = ({ icon, label, value, isLongText = false }: { icon: React.ReactNode, label: string, value: string | number, isLongText?: boolean }) => (
@@ -296,6 +297,18 @@ function App() {
              {status === AnalysisState.COMPLETE && analysis && activeFileName && (
                <ExportMenu analysis={analysis} fileName={activeFileName} contentRef={resultsRef} />
              )}
+
+             <a
+                href={IMAGINE_WORKBENCH_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                title="欢迎使用我做的图片/视频生成平台"
+              >
+                <Sparkles size={16} className="text-[var(--color-accent)]" />
+                <span className="hidden md:inline">图片/视频生成</span>
+                <ExternalLink size={13} className="hidden sm:block text-slate-500" />
+              </a>
              
              <button 
                 onClick={() => setIsSettingsOpen(true)}
