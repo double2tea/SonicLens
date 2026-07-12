@@ -1,269 +1,399 @@
-import React, { useState } from 'react';
-import { Download, FileImage, FileText, FileCode, ChevronDown, Loader2 } from 'lucide-react';
-import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
-import { MusicAnalysisResult } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
+import { ChevronDown, Download, FileCode2, FileImage, FileText, LoaderCircle } from 'lucide-react';
+import type { AnalysisResult } from '../types';
+import type { EditPriority, EditRecommendationCategory } from '../types';
 
 interface ExportMenuProps {
-  analysis: MusicAnalysisResult;
+  analysis: AnalysisResult;
+  contentRef: RefObject<HTMLDivElement | null>;
   fileName: string;
-  contentRef: React.RefObject<HTMLDivElement | null>;
 }
 
-const ExportMenu: React.FC<ExportMenuProps> = ({ analysis, fileName, contentRef }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+const escapeHtml = (value: string | number): string =>
+  String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 
-  const safeFileName = fileName.replace(/\.[^/.]+$/, "");
+const renderTags = (items: string[]): string =>
+  items.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join('');
 
-  const handleExportImage = async () => {
-    if (!contentRef.current) return;
-    setIsExporting(true);
-    
-    try {
-      const dataUrl = await toPng(contentRef.current, {
-        backgroundColor: '#0f172a',
-        quality: 1,
-        pixelRatio: 2,
-        width: 1200,
-        filter: (node: HTMLElement) => {
-           // Ignore players and the export menu itself
-           if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) return false;
-           // Hide normal buttons (like play/reset) but keep functional glass-panels if needed
-           if (node.tagName === 'BUTTON' && node.innerText && !node.classList?.contains('glass-panel')) return false;
-           return true;
-        },
-        style: {
-          width: '1200px',
-          display: 'block', // Ensure block context
-          transform: 'none',
-          animation: 'none',
-          margin: '0',
-          borderRadius: '0'
-        }
-      });
+const editPriorityLabels: Record<EditPriority, string> = {
+  high: '高优先级',
+  medium: '中优先级',
+  low: '低优先级',
+};
 
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = `SonicLens_Analysis_${safeFileName}.png`;
-      link.click();
-    } catch (err) {
-      console.error("Image export failed", err);
-    } finally {
-      setIsExporting(false);
-      setIsOpen(false);
-    }
-  };
+const editPriorityOrder: Record<EditPriority, number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
 
-  const handleExportPDF = async () => {
-    if (!contentRef.current) return;
-    setIsExporting(true);
-    
-    try {
-      const dataUrl = await toPng(contentRef.current, {
-        backgroundColor: '#0f172a',
-        quality: 1,
-        pixelRatio: 2,
-        width: 1200,
-        filter: (node: HTMLElement) => {
-           if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) return false;
-           return true;
-        },
-        style: {
-          width: '1200px',
-          display: 'block',
-          transform: 'none',
-          animation: 'none',
-          margin: '0',
-          borderRadius: '0'
-        }
-      });
+const editCategoryLabels: Record<EditRecommendationCategory, string> = {
+  structure: '结构',
+  pacing: '节奏',
+  cut: '剪切',
+  continuity: '连续性',
+  transition: '转场',
+  color: '色彩',
+  vfx: '视觉效果',
+  motion_graphics: '动态包装',
+  typography: '字体',
+  branding: '品牌',
+};
 
-      // Create temporary image to get dimensions
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise((resolve) => { img.onload = resolve; });
+const createHtmlReport = (analysis: AnalysisResult, fileName: string): string => {
+  const videoRecommendations =
+    analysis.type === 'video'
+      ? [...analysis.editReview.recommendations].sort(
+          (left, right) =>
+            editPriorityOrder[left.priority] - editPriorityOrder[right.priority] ||
+            left.startSeconds - right.startSeconds,
+        )
+      : [];
+  const title =
+    analysis.type === 'music'
+      ? analysis.mainGenre
+      : analysis.type === 'video'
+        ? analysis.title
+        : analysis.sfx.name;
+  const detail =
+    analysis.type === 'music'
+      ? `
+      <section class="metrics">
+        <div><small>BPM</small><strong>${escapeHtml(analysis.bpm ?? '—')}</strong></div>
+        <div><small>Key</small><strong>${escapeHtml(analysis.key ?? '—')}</strong></div>
+        <div><small>Time</small><strong>${escapeHtml(analysis.timeSignature ?? '—')}</strong></div>
+      </section>
+      <section><h2>声音画像</h2><p>${escapeHtml(analysis.educationalContext)}</p></section>
+      ${analysis.mood?.length ? `<section><h2>情绪</h2>${renderTags(analysis.mood)}</section>` : ''}
+      ${analysis.instruments.length ? `<section><h2>乐器与声部</h2>${renderTags(analysis.instruments)}</section>` : ''}
+      ${
+        analysis.segments?.length
+          ? `
+        <section><h2>段落时间轴</h2>
+          ${analysis.segments
+            .map(
+              (segment) => `
+            <article class="row">
+              <code>${escapeHtml(segment.timestamp)}</code>
+              <div><strong>${escapeHtml(segment.genre)}</strong><small>${escapeHtml(segment.mood)}</small><p>${escapeHtml(segment.description)}</p></div>
+            </article>
+          `,
+            )
+            .join('')}
+        </section>`
+          : ''
+      }
+      ${
+        analysis.similarTracks?.length
+          ? `
+        <section><h2>相似曲目</h2>
+          ${analysis.similarTracks.map((track) => `<p><strong>${escapeHtml(track.title)}</strong> · ${escapeHtml(track.artist)}</p>`).join('')}
+        </section>`
+          : ''
+      }
+    `
+      : analysis.type === 'video'
+        ? `
+      <section class="metrics">
+        <div><small>Duration</small><strong>${escapeHtml(analysis.durationSeconds.toFixed(1))}s</strong></div>
+        <div><small>${analysis.segmentation.mode === 'shot' ? '候选镜头' : '分析段落'}</small><strong>${escapeHtml(analysis.shots.length)}</strong></div>
+        <div><small>Priority actions</small><strong>${escapeHtml(analysis.editReview.recommendations.filter((item) => item.priority === 'high').length)}</strong></div>
+      </section>
+      ${
+        analysis.segmentation.mode === 'sequence'
+          ? `<section><h2>分段说明</h2><p><b>镜头总数未可靠确认</b></p><p>${escapeHtml(analysis.segmentation.note)}</p></section>`
+          : ''
+      }
+      <section><h2>诊断总览</h2>
+        <p>${escapeHtml(analysis.summary)}</p>
+        <p><b>叙事结构：</b>${escapeHtml(analysis.narrativeArc)}</p>
+        ${analysis.visualStyle.length ? `<p><b>视觉方向：</b></p>${renderTags(analysis.visualStyle)}` : ''}
+        ${analysis.editReview.strengths.length ? `<p><b>有效之处：</b></p>${analysis.editReview.strengths.map((item) => `<p>✓ ${escapeHtml(item)}</p>`).join('')}` : ''}
+        ${analysis.editReview.topIssues.length ? `<p><b>优先问题：</b></p>${analysis.editReview.topIssues.map((item) => `<p>• ${escapeHtml(item)}</p>`).join('')}` : ''}
+      </section>
+      <section><h2>节奏诊断</h2>
+        <p>${escapeHtml(analysis.editReview.rhythmSummary)}</p>
+        ${analysis.editReview.rhythm
+          .map(
+            (point) => `
+          <article class="row">
+            <code>${escapeHtml(point.startSeconds.toFixed(1))}–${escapeHtml(point.endSeconds.toFixed(1))}s</code>
+            <div><strong>${escapeHtml(point.label)} · ${escapeHtml(point.intensity)}/5</strong><p>${escapeHtml(point.description)}</p></div>
+          </article>`,
+          )
+          .join('')}
+      </section>
+      <section><h2>画面与包装完成度</h2>
+        <article class="row"><code>构图 / 连续性</code><div><p>${escapeHtml(analysis.editReview.visualFinish.compositionAndContinuity)}</p></div></article>
+        <article class="row"><code>色彩 / 曝光</code><div><p>${escapeHtml(analysis.editReview.visualFinish.colorAndExposure)}</p></div></article>
+        <article class="row"><code>VFX / 动效</code><div><p>${escapeHtml(analysis.editReview.visualFinish.vfxAndMotion)}</p></div></article>
+        <article class="row"><code>字体 / 品牌</code><div><p>${escapeHtml(analysis.editReview.visualFinish.typographyAndBranding)}</p></div></article>
+      </section>
+      <section><h2>剪辑行动清单</h2>
+        ${videoRecommendations
+          .map(
+            (item) => `
+          <article class="row">
+            <code>${escapeHtml(item.startSeconds.toFixed(1))}–${escapeHtml(item.endSeconds.toFixed(1))}s</code>
+            <div>
+              <strong>${escapeHtml(editPriorityLabels[item.priority])} · ${escapeHtml(editCategoryLabels[item.category])}</strong>
+              <p><b>依据：</b>${escapeHtml(item.evidence)}</p>
+              <p><b>动作：</b>${escapeHtml(item.action)}</p>
+              <p><b>预期：</b>${escapeHtml(item.expectedImpact)}</p>
+            </div>
+          </article>`,
+          )
+          .join('')}
+      </section>
+      <section><h2>${analysis.segmentation.mode === 'shot' ? '逐镜复核' : '段落复核'}</h2>
+        ${analysis.shots
+          .map(
+            (shot) => `
+          <article class="row">
+            <code>${escapeHtml(shot.startSeconds.toFixed(1))}–${escapeHtml(shot.endSeconds.toFixed(1))}s</code>
+            <div>
+              <strong>${escapeHtml(shot.shotType)} · ${escapeHtml(shot.cameraAngle)}</strong>
+              <small>${escapeHtml(shot.cameraMovement)} · ${escapeHtml(shot.transition)}</small>
+              <p>${escapeHtml(shot.visualDescription)}</p>
+              <p><b>动作：</b>${escapeHtml(shot.visibleAction)}</p>
+              ${shot.onScreenText ? `<p><b>画面文字：</b>${escapeHtml(shot.onScreenText)}</p>` : ''}
+              ${shot.dialogue ? `<p><b>对白：</b>${escapeHtml(shot.dialogue)}</p>` : ''}
+            </div>
+          </article>`,
+          )
+          .join('')}
+      </section>
+      <section><h2>声音观察与设计</h2>
+        ${analysis.shots
+          .map(
+            (shot) => `
+          <article class="row">
+            <code>${escapeHtml(shot.startSeconds.toFixed(1))}–${escapeHtml(shot.endSeconds.toFixed(1))}s</code>
+            <div>
+              <strong>${escapeHtml(shot.soundCue.cue)}</strong>
+              <small>${escapeHtml(shot.soundCue.priority)} · ${escapeHtml(shot.soundCue.diegeticStatus)} · ${escapeHtml(shot.soundCue.route)}</small>
+              <p><b>已有原声：</b>${escapeHtml(shot.existingSound)}</p>
+              <p><b>声音作用：</b>${escapeHtml(shot.soundCue.function)}</p>
+              <p><b>声音质感：</b>${escapeHtml(shot.soundCue.character)}</p>
+              <p><b>混音风险：</b>${escapeHtml(shot.soundCue.mixRisk)}</p>
+            </div>
+          </article>`,
+          )
+          .join('')}
+        ${analysis.risks.length ? `<p><b>制作提醒：</b></p>${analysis.risks.map((risk) => `<p>• ${escapeHtml(risk)}</p>`).join('')}` : ''}
+      </section>
+      <section><h2>搜索关键词</h2>${renderTags(analysis.keywords)}</section>
+      ${
+        analysis.seedAudio
+          ? `<section><h2>SeedAudio Brief</h2>
+        <p><b>Delivery：</b>${escapeHtml(analysis.seedAudio.recommendedMode)} · <b>content_mode：</b>${escapeHtml(analysis.seedAudio.contentMode)}</p>
+        <p>${escapeHtml(analysis.seedAudio.projectContext)}</p>
+        <p><b>Speaker / VO：</b>${escapeHtml(analysis.seedAudio.speakerVo)}</p>
+        <p><b>Music：</b>${escapeHtml(analysis.seedAudio.music)}</p>
+        <p><b>SFX / Ambience：</b>${escapeHtml(analysis.seedAudio.sfxAmbience)}</p>
+        <p><b>Mix：</b>${escapeHtml(analysis.seedAudio.mix)}</p>
+        ${analysis.seedAudio.avoid.length ? `<p><b>Avoid：</b>${escapeHtml(analysis.seedAudio.avoid.join('、'))}</p>` : ''}
+        <pre>${escapeHtml(analysis.seedAudio.textPrompt)}</pre>
+      </section>`
+          : ''
+      }
+    `
+        : `
+      <section class="metrics">
+        <div><small>UCS ID</small><strong>${escapeHtml(analysis.sfx.ucsCatId)}</strong></div>
+        <div><small>Category</small><strong>${escapeHtml(analysis.sfx.ucsCategory)}</strong></div>
+        <div><small>Subcategory</small><strong>${escapeHtml(analysis.sfx.ucsSubCategory)}</strong></div>
+      </section>
+      <section><h2>声音原理</h2><p>${escapeHtml(analysis.educationalContext)}</p></section>
+      <section><h2>拟音方案</h2><p>${escapeHtml(analysis.sfx.foleyInstructions)}</p></section>
+      <section><h2>可用替代物</h2><p>${escapeHtml(analysis.sfx.accessibleAlternatives)}</p></section>
+      <section><h2>音画同步建议</h2><p>${escapeHtml(analysis.sfx.visualSyncTips)}</p></section>
+    `;
 
-      const pdf = new jsPDF({
-        orientation: img.width > img.height ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [img.width, img.height]
-      });
-
-      pdf.addImage(dataUrl, 'PNG', 0, 0, img.width, img.height);
-      pdf.save(`SonicLens_Report_${safeFileName}.pdf`);
-    } catch (err) {
-      console.error("PDF export failed", err);
-    } finally {
-      setIsExporting(false);
-      setIsOpen(false);
-    }
-  };
-
-  const handleExportHTML = () => {
-    setIsExporting(true);
-    try {
-      const isSFX = analysis.type === 'sfx';
-      const mainTitle = isSFX && analysis.sfx ? analysis.sfx.name : (analysis.mainGenre || 'Unknown');
-      
-      const htmlContent = `
-<!DOCTYPE html>
+  return `<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SonicLens Report - ${safeFileName}</title>
-<style>
-  body { font-family: system-ui, -apple-system, sans-serif; background: #050505; color: #f8fafc; padding: 40px; max-width: 800px; margin: 0 auto; line-height: 1.6; }
-  h1 { color: #ff4e00; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 10px; }
-  h2 { color: #e2e8f0; margin-top: 30px; }
-  .tag { display: inline-block; background: rgba(255, 255, 255, 0.05); padding: 4px 10px; border-radius: 4px; margin-right: 8px; margin-bottom: 8px; font-size: 0.9em; border: 1px solid rgba(255, 255, 255, 0.1); }
-  .highlight { color: #ff4e00; font-weight: bold; }
-  .ucs-badge { background: #064e3b; color: #34d399; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-  .card { background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255, 255, 255, 0.1); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-  .stat-label { font-size: 0.8em; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; display: block; margin-bottom: 5px; }
-  .stat-value { font-size: 1.5em; font-weight: bold; }
-  .timeline-item { padding: 15px; border-left: 3px solid #ff4e00; background: rgba(255, 255, 255, 0.05); margin-bottom: 10px; }
-  .time-badge { background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); padding: 2px 8px; border-radius: 4px; font-family: monospace; color: #ff4e00; font-size: 0.8em; }
-  a { color: #ff4e00; text-decoration: none; }
-  .footer { margin-top: 50px; font-size: 0.8em; color: #64748b; text-align: center; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <title>SonicLens — ${escapeHtml(title)}</title>
+  <style>
+    :root{color-scheme:light;font-family:ui-sans-serif,system-ui,sans-serif;background:#eeede7;color:#151b17}body{max-width:860px;margin:auto;padding:64px 28px 96px;line-height:1.75}header{padding-bottom:36px;border-bottom:1px solid #c5c8c3}small{display:block;color:#59695f;font:11px ui-monospace,monospace;letter-spacing:.08em}h1{max-width:700px;margin:18px 0 12px;font-size:48px;line-height:1.05;letter-spacing:-.045em}h2{margin:0 0 18px;font-size:22px;letter-spacing:-.02em}section{margin-top:42px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.metrics div{padding:18px;border:1px solid #c5c8c3;border-radius:10px;background:#f8f7f2}.metrics strong{display:block;margin-top:8px;font:18px ui-monospace,monospace;color:#176b45}.tag{display:inline-block;margin:0 7px 7px 0;padding:5px 9px;border:1px solid #c5c8c3;border-radius:6px;color:#39483f;font-size:12px}.row{display:grid;grid-template-columns:110px 1fr;gap:20px;padding:20px 0;border-top:1px solid #d4d6d1}.row code{color:#176b45}.row small{margin-top:5px}.row p{margin:8px 0 0;color:#39483f;font-size:13px}pre{white-space:pre-wrap;border-radius:10px;background:#18201a;color:#eef3ef;padding:18px;font:12px/1.7 ui-monospace,monospace}footer{margin-top:64px;padding-top:20px;border-top:1px solid #c5c8c3;color:#59695f;font-size:11px}@media(max-width:600px){h1{font-size:36px}.metrics{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
+  </style>
 </head>
 <body>
-  <h1>SonicLens 分析报告 (${analysis.type === 'sfx' ? 'SFX' : 'Music'})</h1>
-  <p><strong>文件:</strong> ${fileName}</p>
-  <p><strong>识别结果:</strong> <span class="highlight">${mainTitle}</span></p>
-
-  ${isSFX && analysis.sfx ? `
-      <div class="card">
-        <span class="ucs-badge">UCS: ${analysis.sfx.ucsCatId} / ${analysis.sfx.ucsCategory} / ${analysis.sfx.ucsSubCategory}</span>
-      </div>
-      <h2>拟音指南 (Foley)</h2>
-      <div class="card">
-         <p>${analysis.sfx.foleyInstructions}</p>
-      </div>
-      <h2>替代方案</h2>
-      <div class="card">
-         <p>${analysis.sfx.accessibleAlternatives}</p>
-      </div>
-  ` : `
-      <div class="grid">
-        <div class="card">
-            <span class="stat-label">BPM</span>
-            <span class="stat-value">${analysis.bpm}</span>
-        </div>
-        <div class="card">
-            <span class="stat-label">调式 Key</span>
-            <span class="stat-value">${analysis.key}</span>
-        </div>
-        <div class="card">
-            <span class="stat-label">拍号 Time Sig</span>
-            <span class="stat-value">${analysis.timeSignature}</span>
-        </div>
-    </div>
-    
-    ${analysis.segments && analysis.segments.length > 0 ? `
-      <h2>时间轴分析 (Timeline)</h2>
-      <div>
-         ${analysis.segments.map(s => `
-            <div class="timeline-item">
-               <span class="time-badge">${s.timestamp}</span>
-               <strong style="margin-left: 10px; color: #e2e8f0;">${s.genre}</strong>
-               <span style="color: #94a3b8; font-size: 0.9em; margin-left: 5px;">#${s.mood}</span>
-               <p style="margin-top: 5px; color: #cbd5e1;">${s.description}</p>
-            </div>
-         `).join('')}
-      </div>
-    ` : ''}
-
-    <h2>风格分析</h2>
-    <div class="card">
-        <p>${analysis.educationalContext}</p>
-    </div>
-  `}
-
-  ${!isSFX ? `
-      <h2>检测到的乐器</h2>
-      <div>
-        ${analysis.instruments?.map(i => `<span class="tag">${i}</span>`).join('')}
-      </div>
-
-      <h2>情绪 Mood</h2>
-      <div>
-        ${analysis.mood?.map(m => `<span class="tag">#${m}</span>`).join('')}
-      </div>
-
-      <h2>参考曲目 Reference Tracks</h2>
-      <div class="card">
-        <ul style="list-style: none; padding: 0;">
-        ${analysis.similarTracks?.map(t => `
-            <li style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #334155;">
-                <strong>${t.title}</strong> - ${t.artist}
-            </li>
-        `).join('')}
-        </ul>
-      </div>
-  ` : ''}
-
-  <h2>搜索关键词 (English)</h2>
-  <div>
-      ${analysis.keywords.map(k => `<span class="tag">${k}</span>`).join('')}
-  </div>
-
-  <div class="footer">
-      Generated by SonicLens AI
-  </div>
+  <header><small>${analysis.type === 'music' ? 'MUSIC ANALYSIS' : analysis.type === 'video' ? 'VIDEO ANALYSIS' : 'SFX ANALYSIS'} · SONICLENS</small><h1>${escapeHtml(title)}</h1><p>${escapeHtml(fileName)}</p></header>
+  ${detail}
+  ${analysis.type === 'video' ? '' : `<section><h2>搜索关键词</h2>${renderTags(analysis.keywords)}</section>`}
+  <footer>Generated locally by SonicLens</footer>
 </body>
-</html>
-      `;
-      const blob = new Blob([htmlContent], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `SonicLens_Report_${safeFileName}.html`;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("HTML export failed", err);
+</html>`;
+};
+
+const triggerDownload = (href: string, download: string) => {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = download;
+  link.click();
+};
+
+export default function ExportMenu({ analysis, contentRef, fileName }: ExportMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const safeFileName = fileName.replace(/\.[^/.]+$/, '').replace(/[\\/:*?"<>|]/g, '-');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeMenu = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || !menuRef.current?.contains(target)) setIsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('mousedown', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen]);
+
+  const captureReport = async (format: 'jpeg' | 'png'): Promise<string> => {
+    if (!contentRef.current) throw new Error('报告内容尚未准备好。');
+    const { toJpeg, toPng } = await import('html-to-image');
+    const collapsedDetails = Array.from(
+      contentRef.current.querySelectorAll<HTMLDetailsElement>('details:not([open])'),
+    );
+    const options = {
+      backgroundColor: '#eeede7',
+      cacheBust: true,
+      pixelRatio: 2,
+      skipFonts: true,
+      filter: (node: HTMLElement) =>
+        !(node instanceof HTMLElement && node.dataset.exportIgnore === 'true'),
+    };
+
+    collapsedDetails.forEach((details) => {
+      details.open = true;
+    });
+    try {
+      return format === 'jpeg'
+        ? await toJpeg(contentRef.current, { ...options, quality: 0.88 })
+        : await toPng(contentRef.current, options);
     } finally {
-      setIsExporting(false);
-      setIsOpen(false);
+      collapsedDetails.forEach((details) => {
+        details.open = false;
+      });
     }
   };
 
+  const runExport = async (action: () => Promise<void>) => {
+    setError(null);
+    setIsExporting(true);
+    try {
+      await action();
+      setIsOpen(false);
+    } catch (exportError: unknown) {
+      setError(exportError instanceof Error ? exportError.message : '导出失败，请重试。');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const exportPng = () =>
+    runExport(async () => {
+      triggerDownload(await captureReport('png'), `SonicLens_${safeFileName}.png`);
+    });
+
+  const exportPdf = () =>
+    runExport(async () => {
+      const { jsPDF } = await import('jspdf');
+      const dataUrl = await captureReport('jpeg');
+      const image = new Image();
+      image.src = dataUrl;
+      await image.decode();
+      const pdf = new jsPDF({
+        orientation: image.width > image.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [image.width, image.height],
+      });
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, image.width, image.height, undefined, 'FAST');
+      pdf.save(`SonicLens_${safeFileName}.pdf`);
+    });
+
+  const exportHtml = () =>
+    runExport(async () => {
+      const blob = new Blob([createHtmlReport(analysis, fileName)], {
+        type: 'text/html;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url, `SonicLens_${safeFileName}.html`);
+      URL.revokeObjectURL(url);
+    });
+
   return (
-    <div className="relative">
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
+    <div ref={menuRef} className="relative shrink-0" data-export-ignore="true">
+      <button
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
         disabled={isExporting}
-        className="flex items-center gap-2 bg-[var(--color-accent)] hover:bg-orange-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-[var(--color-accent)]/20 disabled:opacity-70"
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className="inline-flex h-10 items-center gap-2 rounded-lg border hairline px-3.5 text-xs font-semibold hover:border-[var(--line-strong)] hover:bg-black/[0.035] disabled:opacity-50"
       >
-        {isExporting ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-        导出结果
-        <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        {isExporting ? <LoaderCircle size={15} className="animate-spin" /> : <Download size={15} />}
+        {isExporting ? '正在导出' : '导出报告'}
+        <ChevronDown size={13} className={isOpen ? 'rotate-180' : ''} />
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-black/80 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200">
-          <button onClick={handleExportImage} className="w-full text-left px-4 py-3 hover:bg-white/10 flex items-center gap-3 text-slate-200 text-sm transition-colors">
-            <FileImage size={16} className="text-purple-400" /> 导出图片 (PNG)
+        <div
+          role="menu"
+          className="absolute top-full right-0 z-50 mt-2 w-52 overflow-hidden rounded-lg border hairline bg-[var(--surface-raised)] p-1.5"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void exportPng()}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[var(--text-muted)] hover:bg-black/[0.045] hover:text-[var(--text)]"
+          >
+            <FileImage size={15} className="accent-text" /> 图片 · PNG
           </button>
-          <button onClick={handleExportPDF} className="w-full text-left px-4 py-3 hover:bg-white/10 flex items-center gap-3 text-slate-200 text-sm border-t border-white/5 transition-colors">
-            <FileText size={16} className="text-red-400" /> 导出文档 (PDF)
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void exportPdf()}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[var(--text-muted)] hover:bg-black/[0.045] hover:text-[var(--text)]"
+          >
+            <FileText size={15} className="accent-text" /> 文档 · PDF
           </button>
-          <button onClick={handleExportHTML} className="w-full text-left px-4 py-3 hover:bg-white/10 flex items-center gap-3 text-slate-200 text-sm border-t border-white/5 transition-colors">
-            <FileCode size={16} className="text-emerald-400" /> 导出网页 (HTML)
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void exportHtml()}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[var(--text-muted)] hover:bg-black/[0.045] hover:text-[var(--text)]"
+          >
+            <FileCode2 size={15} className="accent-text" /> 网页 · HTML
           </button>
         </div>
       )}
-
-      {/* Backdrop to close */}
-      {isOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+      {error && (
+        <p
+          className="absolute top-full right-0 mt-2 w-64 text-right text-xs text-[var(--danger)]"
+          role="alert"
+        >
+          {error}
+        </p>
       )}
     </div>
   );
-};
-
-export default ExportMenu;
+}

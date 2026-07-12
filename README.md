@@ -1,159 +1,81 @@
 # SonicLens
 
-Music and SFX analysis for editors, powered by a Gemini-compatible API.
+面向剪辑师的视听分析工作台。SonicLens 调用用户自己配置的 Gemini-compatible API，分析音乐、音效或短视频，生成节奏与卡点、UCS 分类、分镜、画面/原声描述、声音设计路线和 SeedAudio Prompt。
 
-## API Provider
+## 产品边界
 
-SonicLens calls the Gemini `generateContent` REST API directly. It defaults to the 12AI
-Gemini-compatible endpoint:
+- BYOK：每位用户在设置面板中填写自己的 API Key。
+- API Key 仅保存在当前浏览器的 `localStorage`，不会写入仓库或 Cloudflare 构建变量。
+- 音乐/音效在浏览器内解码与压缩后发送；视频模式会把原始 MP4 发送至用户配置的 API，以保留画面与声音证据。
+- 分析历史只保存在当前浏览器，最多 50 条；报告元数据使用 `localStorage`，对应的轻量分析音频使用 `IndexedDB`，不保存原始视频。
+- Cloudflare Worker 只负责静态资源和匿名使用事件，不代理模型请求。
+- 多轮分析 Agent 复用同一 Gemini-compatible REST 接口和 BYOK 配置，不依赖仅本地可用的服务端 SDK。
+
+## 本地开发
+
+要求 Node.js 22。
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+首次使用时，在页面右上角设置中填写 API Key、Base URL 和模型名称。
+
+默认 API 配置：
 
 ```bash
 VITE_GEMINI_BASE_URL=https://cdn.12ai.org
 VITE_GEMINI_MODEL=gemini-3.5-flash
+VITE_GEMINI_MAX_UPLOAD_MB=30
+VITE_AUDIO_TARGET_UPLOAD_MB=12
+VITE_GEMINI_MAX_OUTPUT_TOKENS=16384
 ```
 
-To use the official Gemini API instead, set:
+也可以使用官方 Gemini endpoint：
 
 ```bash
 VITE_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 VITE_GEMINI_MODEL=gemini-2.5-flash
 ```
 
-The Settings panel can override API key, base URL, and model in the browser for local testing.
-
-Get a 12AI API key with this invite link:
-https://new.12ai.org/register?aff=PYE8
-
-## Local Development
-
-Prerequisites: Node.js 22+.
-
-1. Install dependencies:
-   `npm install`
-2. Create `.env.local`:
-
-```bash
-VITE_GEMINI_API_KEY=your_12ai_key
-VITE_GEMINI_BASE_URL=https://cdn.12ai.org
-VITE_GEMINI_MODEL=gemini-3.5-flash
-VITE_GEMINI_MAX_UPLOAD_MB=30
-VITE_AUDIO_TARGET_UPLOAD_MB=12
-VITE_GEMINI_MAX_OUTPUT_TOKENS=16384
-```
-
-3. Run locally:
-   `npm run dev`
-
-4. Verify before deploying:
+## 质量检查
 
 ```bash
 npm run type-check
+npm run lint
+npm run format:check
+npm run test:coverage
 npm run build
 ```
 
-## Cloudflare Pages Deployment
+## Cloudflare Pages
 
-Connect this GitHub repository to Cloudflare Pages for automatic deployments.
+- Build command: `npm run build`
+- Output directory: `dist`
+- Node.js: `22`
+- Production branch: `main`
 
-Cloudflare Pages settings:
+`wrangler.toml` 配置 Pages 输出目录和 Analytics Engine binding。`public/_worker.js` 构建后成为 `dist/_worker.js`：`/api/analytics` 写入匿名事件，其余请求交给静态资源 binding。
 
-- **Framework preset:** None
-- **Build command:** `npm run build`
-- **Build output directory:** `dist`
-- **Production branch:** `main`
-- **Node.js version:** `22`
+不要在 Cloudflare Pages 中设置 `VITE_GEMINI_API_KEY`。Vite 的 `VITE_*` 值会进入公开浏览器 bundle，不适合保存共享密钥。
 
-Build command:
+## 媒体与视频分析
 
-```bash
-npm run build
-```
+- 音乐与音效模式只接收音频；视频模式首版只接收 MP4，并联合理解画面与声音。
+- WAV 或超过目标大小的音频会转为单声道低采样率 WAV。
+- 当前报告播放器使用本次媒体；历史报告恢复对应的轻量分析音频与波形。
+- 视频先生成紧凑分镜与声音 spotting，再由第二阶段把报告编译为严格的 SeedAudio brief 与不超过 2048 字符的 `text_prompt`。
+- 视频总时长使用浏览器读取的原片元数据校准；模型负责镜头内容与切点识别，不再自行估算片长。
+- 视频报告展示可点击时间轴；当前会话可跳转原片，但历史记录只保存文字和时间码，不保存视频、帧图、base64 或 data URI。
+- 分析 Agent 默认只读取结构化报告。只有用户显式选择“本轮重新查看原片”时，才会在该轮重新发送 MP4。
+- 卡点与段落支持区间循环试听，波形选区可在本地裁剪后发起局部重分析。
+- 卡点试听会吸附到浏览器本地检测到的最近瞬态；模型报告中的原始时间字段保持不变。
+- 历史记录支持关键词搜索、收藏与收藏筛选，状态保存在当前浏览器。
+- 取消或重置分析会隔离旧请求，避免过期结果覆盖当前页面。
+- 模型 JSON 会在进入 UI 和历史缓存前执行运行时结构校验。
 
-Output directory:
+## 匿名使用事件
 
-```bash
-dist
-```
-
-Set these Cloudflare Pages environment variables before building:
-
-```bash
-VITE_GEMINI_API_KEY=your_12ai_key
-VITE_GEMINI_BASE_URL=https://cdn.12ai.org
-VITE_GEMINI_MODEL=gemini-3.5-flash
-VITE_GEMINI_MAX_UPLOAD_MB=30
-VITE_AUDIO_TARGET_UPLOAD_MB=12
-VITE_GEMINI_MAX_OUTPUT_TOKENS=16384
-```
-
-After GitHub is connected, every push to `main` triggers a production deployment. Pull
-requests or non-production branches can be configured as preview deployments in Cloudflare
-Pages.
-
-`wrangler.toml` also configures the Pages Functions output directory and the Analytics
-Engine dataset binding used by `/api/analytics`.
-
-`VITE_*` values are embedded in the browser bundle by Vite, so use a restricted API key
-suitable for browser-side requests.
-
-## Usage Analytics
-
-SonicLens sends anonymous usage events to `/api/analytics/:event/:mode/:sizeBucket`.
-The Pages Function validates each event and writes it to the Cloudflare Workers Analytics
-Engine dataset `soniclens`.
-
-Tracked events:
-
-- `analysis_started`
-- `analysis_completed`
-- `analysis_failed`
-
-Tracked fields are intentionally limited to mode, file size bucket, processed file size
-bucket, duration, transcode flag, model, and short error message. SonicLens does not send
-audio files, filenames, prompts, API keys, or analysis results to analytics.
-
-Analytics Engine columns:
-
-- `blob1`: event name
-- `blob2`: mode
-- `blob3`: original file size bucket
-- `blob4`: processed file size bucket
-- `blob5`: transcode flag
-- `blob6`: model
-- `blob7`: short error message
-- `double1`: duration in milliseconds
-
-Example weekly query:
-
-```sql
-SELECT
-  blob1 AS event_name,
-  blob2 AS mode,
-  blob3 AS original_size_bucket,
-  COUNT() AS events,
-  AVG(double1) AS average_duration_ms
-FROM soniclens
-WHERE timestamp >= NOW() - INTERVAL '7' DAY
-GROUP BY event_name, mode, original_size_bucket
-ORDER BY events DESC
-```
-
-Local Pages Function smoke test:
-
-```bash
-npm run build
-npx wrangler pages dev dist --port 8788
-curl -i -X POST http://localhost:8788/api/analytics \
-  -H 'Content-Type: application/json' \
-  --data '{"eventName":"analysis_started","mode":"music","originalSizeBucket":"5-20MB"}'
-```
-
-## Media Processing
-
-SonicLens prepares media in the browser before calling the API:
-
-- MP4/video files are decoded locally and only the extracted analysis audio is uploaded.
-- Large audio or WAV files are transcoded to mono WAV with a lower sample rate.
-- `VITE_AUDIO_TARGET_UPLOAD_MB` controls the target processed audio size.
-- `VITE_GEMINI_MAX_OUTPUT_TOKENS` controls the maximum model response length.
-- If a detailed structured response is truncated, SonicLens automatically retries with a compact schema.
+生产环境发送 `analysis_started`、`analysis_completed` 和 `analysis_failed`。事件只包含模式、文件大小区间、处理时长、是否转码、模型名和短错误信息，不包含文件名、音频、API Key、Prompt 或分析结果。

@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Pause, Play, Repeat2, Scissors } from 'lucide-react';
+import { detectTransientTimes } from '../services/transientDetection';
 
 type WebKitAudioWindow = Window &
   typeof globalThis & {
@@ -9,226 +10,401 @@ type WebKitAudioWindow = Window &
 const createAudioContext = (): AudioContext => {
   const AudioContextConstructor =
     window.AudioContext ?? (window as WebKitAudioWindow).webkitAudioContext;
-
-  if (!AudioContextConstructor) {
-    throw new Error('当前浏览器不支持音频解码。');
-  }
-
+  if (!AudioContextConstructor) throw new Error('当前浏览器不支持音频解码。');
   return new AudioContextConstructor();
 };
 
+interface PlaybackRange {
+  end: number;
+  start: number;
+}
+
 interface WaveformPlayerProps {
-  file: File;
   autoPlay?: boolean;
+  file: File;
+  isPreparingRange?: boolean;
+  onAnalyzeRange?: (start: number, end: number) => Promise<void> | void;
+  onTransientsDetected?: (timesInSeconds: number[]) => void;
 }
 
 export interface WaveformPlayerRef {
-  seekTo: (timeInSeconds: number) => void;
+  previewAround: (timeInSeconds: number) => void;
+  previewRange: (startInSeconds: number, endInSeconds: number) => void;
 }
 
-const WaveformPlayer = forwardRef<WaveformPlayerRef, WaveformPlayerProps>(({ file, autoPlay = false }, ref) => {
+const formatTime = (time: number): string => {
+  if (!Number.isFinite(time)) return '0:00';
+  const minutes = Math.floor(time / 60);
+  const seconds = Math.floor(time % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const WaveformPlayer = forwardRef<WaveformPlayerRef, WaveformPlayerProps>(function WaveformPlayer(
+  { autoPlay = false, file, isPreparingRange = false, onAnalyzeRange, onTransientsDetected },
+  ref,
+) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const loopRangeRef = useRef<PlaybackRange | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [loopRange, setLoopRange] = useState<PlaybackRange | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState(0);
+  const [selectionStart, setSelectionStart] = useState(0);
+  const [showSelection, setShowSelection] = useState(false);
   const [waveform, setWaveform] = useState<number[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [isDecoding, setIsDecoding] = useState(false);
 
-  // Expose methods to parent
-  useImperativeHandle(ref, () => ({
-    seekTo: (timeInSeconds: number) => {
-      if (audioRef.current) {
-        // Clamp time
-        const safeTime = Math.max(0, Math.min(timeInSeconds, audioRef.current.duration || 0));
-        audioRef.current.currentTime = safeTime;
-        setCurrentTime(safeTime);
-        if (!isPlaying) {
-            audioRef.current.play().catch(e => console.error("Play failed", e));
-            setIsPlaying(true);
-        }
-      }
+  const play = async () => {
+    if (!audioRef.current) return;
+    try {
+      await audioRef.current.play();
+      setPlaybackError(null);
+    } catch {
+      setPlaybackError('浏览器阻止了播放，请再次点击播放按钮。');
     }
+  };
+
+  const updateLoopRange = (range: PlaybackRange | null) => {
+    loopRangeRef.current = range;
+    setLoopRange(range);
+  };
+
+  const previewRange = (startInSeconds: number, endInSeconds: number) => {
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(startInSeconds) || !Number.isFinite(endInSeconds)) return;
+
+    const audioDuration = Number.isFinite(audio.duration) ? audio.duration : duration;
+    const start = Math.max(0, Math.min(startInSeconds, audioDuration));
+    const end = Math.max(start, Math.min(endInSeconds, audioDuration));
+    if (end <= start) return;
+
+    updateLoopRange({ start, end });
+    audio.currentTime = start;
+    setCurrentTime(start);
+    void play();
+  };
+
+  useImperativeHandle(ref, () => ({
+    previewAround: (timeInSeconds: number) => {
+      previewRange(timeInSeconds - 2, timeInSeconds + 3);
+    },
+    previewRange,
   }));
 
-  // Initialize Audio
   useEffect(() => {
-    if (!file) return;
-
     const url = URL.createObjectURL(file);
     const audio = new Audio(url);
     audioRef.current = audio;
+    loopRangeRef.current = null;
+    setLoopRange(null);
+    setCurrentTime(0);
+    setDuration(0);
+    setIsPlaying(false);
+    setPlaybackError(null);
+    setShowSelection(false);
 
-    audio.addEventListener('loadedmetadata', () => {
-      setDuration(audio.duration);
-    });
-
-    audio.addEventListener('timeupdate', () => {
+    const onLoadedMetadata = () => {
+      const nextDuration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      setDuration(nextDuration);
+      setSelectionStart(0);
+      setSelectionEnd(Math.min(30, nextDuration));
+    };
+    const onTimeUpdate = () => {
+      const range = loopRangeRef.current;
+      const loopLead = range ? Math.min(0.05, (range.end - range.start) / 2) : 0;
+      if (range && audio.currentTime >= range.end - loopLead) {
+        audio.currentTime = range.start;
+      }
       setCurrentTime(audio.currentTime);
-    });
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => {
+      const range = loopRangeRef.current;
+      if (!range) {
+        setCurrentTime(0);
+        return;
+      }
 
-    audio.addEventListener('ended', () => {
-      setIsPlaying(false);
-      setCurrentTime(0); // Reset visual position on end, or keep it at end
-    });
+      audio.currentTime = range.start;
+      setCurrentTime(range.start);
+      void audio.play().catch(() => {
+        setPlaybackError('浏览器阻止了播放，请再次点击播放按钮。');
+      });
+    };
+
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('ended', onEnded);
 
     if (autoPlay) {
-      audio.play().catch(e => console.log("Autoplay blocked", e));
-      setIsPlaying(true);
+      void audio.play().catch(() => {
+        setPlaybackError('浏览器阻止了播放，请再次点击播放按钮。');
+      });
     }
 
     return () => {
       audio.pause();
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('ended', onEnded);
       audio.src = '';
+      audioRef.current = null;
+      loopRangeRef.current = null;
       URL.revokeObjectURL(url);
     };
-  }, [file, autoPlay]);
+  }, [autoPlay, file]);
 
-  // Generate Waveform Data
   useEffect(() => {
+    let cancelled = false;
+    let audioContext: AudioContext | null = null;
+    setWaveform([]);
+    onTransientsDetected?.([]);
+
     const generateWaveform = async () => {
-      setIsDecoding(true);
       try {
         const arrayBuffer = await file.arrayBuffer();
-        const audioContext = createAudioContext();
-        
-        // Handle decoding errors (often happens with video files in some browsers)
-        try {
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            const rawData = audioBuffer.getChannelData(0);
-            const samples = 200; // Number of bars
-            const blockSize = Math.floor(rawData.length / samples);
-            const filteredData = [];
-
-            for (let i = 0; i < samples; i++) {
-            let sum = 0;
-            for (let j = 0; j < blockSize; j++) {
-                sum += Math.abs(rawData[i * blockSize + j]);
-            }
-            filteredData.push(sum / blockSize);
-            }
-
-            // Normalize
-            const multiplier = Math.pow(Math.max(...filteredData), -1);
-            setWaveform(filteredData.map(n => n * multiplier));
-        } catch (decodeErr) {
-            console.warn("Could not decode audio data for waveform visualization (might be a video file restriction). Using fallback visualization.", decodeErr);
-            // Fallback: Generate a fake nice looking pattern
-            setWaveform(Array.from({length: 200}, () => 0.2 + Math.random() * 0.3));
+        audioContext = createAudioContext();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        const rawData = audioBuffer.getChannelData(0);
+        const sampleCount = 180;
+        const blockSize = Math.max(1, Math.floor(rawData.length / sampleCount));
+        const values = Array.from({ length: sampleCount }, (_, index) => {
+          let sum = 0;
+          let sampled = 0;
+          const start = index * blockSize;
+          const end = Math.min(start + blockSize, rawData.length);
+          const stride = Math.max(1, Math.floor((end - start) / 256));
+          for (let cursor = start; cursor < end; cursor += stride) {
+            sum += Math.abs(rawData[cursor]);
+            sampled += 1;
+          }
+          return sum / Math.max(1, sampled);
+        });
+        const peak = Math.max(...values, 0.001);
+        if (!cancelled) {
+          setWaveform(values.map((value) => value / peak));
+          onTransientsDetected?.(detectTransientTimes(rawData, audioBuffer.sampleRate));
         }
-        
-        audioContext.close();
-      } catch (e) {
-        console.error("Error processing audio", e);
+      } catch {
+        if (!cancelled) {
+          setWaveform([]);
+          onTransientsDetected?.([]);
+        }
       } finally {
-        setIsDecoding(false);
+        if (audioContext) await audioContext.close();
       }
     };
 
-    generateWaveform();
-  }, [file]);
+    void generateWaveform();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, onTransientsDetected]);
 
-  // Draw Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || waveform.length === 0) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    context.scale(ratio, ratio);
+    context.clearRect(0, 0, width, height);
 
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.offsetWidth;
-    const height = canvas.offsetHeight;
-
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    ctx.clearRect(0, 0, width, height);
-
-    const barWidth = width / waveform.length;
-    const gap = 1;
-    const effectiveBarWidth = barWidth - gap;
-
-    waveform.forEach((val, index) => {
-      const x = index * barWidth;
-      const barHeight = val * height * 0.8; // Scale height
-      const y = (height - barHeight) / 2;
-
-      // Color based on progress
-      const progress = currentTime / duration;
-      const barProgress = index / waveform.length;
-      
-      if (barProgress < progress) {
-        ctx.fillStyle = '#ff4e00'; // Accent (Played)
-      } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // Unplayed
-      }
-
-      // Rounded bars
-      ctx.beginPath();
-      ctx.roundRect(x, y, Math.max(1, effectiveBarWidth), barHeight, 2);
-      ctx.fill();
+    const progress = duration > 0 ? currentTime / duration : 0;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const step = width / waveform.length;
+    waveform.forEach((value, index) => {
+      const barHeight = Math.max(2, value * height * 0.72);
+      context.fillStyle = index / waveform.length <= progress ? accent : 'rgba(21,31,24,0.18)';
+      context.fillRect(index * step, (height - barHeight) / 2, Math.max(1, step - 1.5), barHeight);
     });
-  }, [waveform, currentTime, duration]);
+  }, [currentTime, duration, waveform]);
 
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
+  const togglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) void play();
+    else audio.pause();
   };
 
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const percent = Math.max(0, Math.min(1, x / rect.width));
-    const newTime = percent * duration;
-    
-    audioRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
+  const seek = (value: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    updateLoopRange(null);
+    audio.currentTime = value;
+    setCurrentTime(value);
   };
 
-  const formatTime = (time: number) => {
-    const min = Math.floor(time / 60);
-    const sec = Math.floor(time % 60);
-    return `${min}:${sec.toString().padStart(2, '0')}`;
+  const updateSelectionStart = (value: number) => {
+    setSelectionStart(Math.max(0, Math.min(value, selectionEnd - 1)));
   };
+
+  const updateSelectionEnd = (value: number) => {
+    setSelectionEnd(Math.min(duration, Math.max(value, selectionStart + 1)));
+  };
+
+  const selectionLeft = duration > 0 ? (selectionStart / duration) * 100 : 0;
+  const selectionWidth = duration > 0 ? ((selectionEnd - selectionStart) / duration) * 100 : 0;
+  const canAnalyzeSelection = Boolean(onAnalyzeRange) && duration >= 1 && !isPreparingRange;
 
   return (
-    <div className="w-full glass-panel p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-        <span>{formatTime(currentTime)}</span>
-        <span>{formatTime(duration)}</span>
-      </div>
-      
-      <div 
-        ref={containerRef}
-        className="relative h-24 w-full cursor-pointer group"
-        onClick={handleSeek}
-      >
-        <canvas 
-            ref={canvasRef} 
-            className="w-full h-full block"
-        />
-        {/* Hover line effect */}
-        <div className="absolute top-0 bottom-0 w-[1px] bg-white/50 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity" style={{ left: '0%' }} />
+    <div className="waveform-shell">
+      <div className="flex items-center gap-3 sm:gap-4">
+        <button
+          type="button"
+          onClick={togglePlayback}
+          className="accent-bg grid h-10 w-10 shrink-0 place-items-center rounded-lg"
+          aria-label={isPlaying ? '暂停' : '播放'}
+        >
+          {isPlaying ? (
+            <Pause size={17} fill="currentColor" />
+          ) : (
+            <Play size={17} fill="currentColor" className="ml-0.5" />
+          )}
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <div className="relative h-14 overflow-hidden rounded-sm">
+            {waveform.length > 0 ? (
+              <canvas ref={canvasRef} className="block h-full w-full" aria-hidden="true" />
+            ) : (
+              <div className="absolute inset-x-0 top-1/2 h-px bg-black/[0.16]" aria-hidden="true" />
+            )}
+            {showSelection && duration > 0 && (
+              <div
+                className="pointer-events-none absolute inset-y-0 border-x border-[var(--accent)] bg-[rgba(23,107,69,0.12)]"
+                style={{ left: `${selectionLeft}%`, width: `${selectionWidth}%` }}
+                aria-hidden="true"
+              />
+            )}
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={Math.min(currentTime, duration || 0)}
+              onChange={(event) => seek(Number(event.target.value))}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              aria-label="播放进度"
+            />
+          </div>
+          <div className="data-value mt-1 flex justify-between text-[0.62rem] text-[var(--text-muted)]">
+            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        {onAnalyzeRange && (
+          <button
+            type="button"
+            onClick={() => setShowSelection((visible) => !visible)}
+            aria-expanded={showSelection}
+            className={`hidden shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold sm:inline-flex ${
+              showSelection
+                ? 'accent-surface accent-text'
+                : 'hairline text-[var(--text-muted)] hover:border-[var(--line-strong)] hover:text-[var(--text)]'
+            }`}
+          >
+            <Scissors size={14} />
+            选择片段
+          </button>
+        )}
       </div>
 
-      <div className="flex justify-center">
-        <button 
-          onClick={togglePlay}
-          className="w-12 h-12 flex items-center justify-center rounded-full bg-[var(--color-accent)] hover:bg-orange-500 text-white shadow-lg shadow-[var(--color-accent)]/30 transition-all active:scale-95"
+      {loopRange && (
+        <div className="mt-3 flex items-center justify-between gap-3 border-t hairline pt-3 text-xs">
+          <span className="flex items-center gap-2 text-[var(--text-secondary)]">
+            <Repeat2 size={14} className="accent-text" />
+            循环试听
+            <span className="data-value accent-text">
+              {formatTime(loopRange.start)}–{formatTime(loopRange.end)}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => updateLoopRange(null)}
+            className="text-[var(--text-muted)] hover:text-[var(--text)]"
+          >
+            结束循环
+          </button>
+        </div>
+      )}
+
+      {onAnalyzeRange && (
+        <button
+          type="button"
+          onClick={() => setShowSelection((visible) => !visible)}
+          aria-expanded={showSelection}
+          className={`mt-3 inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold sm:hidden ${
+            showSelection ? 'accent-surface accent-text' : 'hairline text-[var(--text-muted)]'
+          }`}
         >
-          {isPlaying ? <Pause fill="white" size={20} /> : <Play fill="white" size={20} className="ml-1" />}
+          <Scissors size={14} />
+          选择片段
         </button>
-      </div>
+      )}
+
+      {showSelection && onAnalyzeRange && (
+        <div className="mt-3 grid gap-4 border-t hairline pt-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+          <label className="block">
+            <span className="flex justify-between text-[0.68rem] text-[var(--text-muted)]">
+              <span>片段起点</span>
+              <span className="data-value text-[var(--text)]">{formatTime(selectionStart)}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, selectionEnd - 1)}
+              step={0.1}
+              value={selectionStart}
+              onChange={(event) => updateSelectionStart(Number(event.target.value))}
+              className="mt-2 w-full accent-[var(--accent)]"
+            />
+          </label>
+          <label className="block">
+            <span className="flex justify-between text-[0.68rem] text-[var(--text-muted)]">
+              <span>片段终点</span>
+              <span className="data-value text-[var(--text)]">{formatTime(selectionEnd)}</span>
+            </span>
+            <input
+              type="range"
+              min={Math.min(duration, selectionStart + 1)}
+              max={duration}
+              step={0.1}
+              value={selectionEnd}
+              onChange={(event) => updateSelectionEnd(Number(event.target.value))}
+              className="mt-2 w-full accent-[var(--accent)]"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!canAnalyzeSelection}
+            onClick={() => void onAnalyzeRange(selectionStart, selectionEnd)}
+            className="accent-bg inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Scissors size={14} />
+            {isPreparingRange ? '正在准备片段' : '重新分析此片段'}
+          </button>
+        </div>
+      )}
+
+      {playbackError && (
+        <p className="mt-3 text-xs text-[var(--danger)]" role="alert">
+          {playbackError}
+        </p>
+      )}
     </div>
   );
 });

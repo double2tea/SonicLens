@@ -44,25 +44,24 @@ export const getStoredGeminiSettings = (): StoredGeminiSettings => ({
 
 export const getGeminiRuntimeConfig = (): GeminiRuntimeConfig => {
   const stored = getStoredGeminiSettings();
-  const envApiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
   const envBaseUrl = import.meta.env.VITE_GEMINI_BASE_URL?.trim();
   const envModel = import.meta.env.VITE_GEMINI_MODEL?.trim();
 
   return {
-    apiKey: stored.apiKey || envApiKey || undefined,
+    apiKey: stored.apiKey || undefined,
     baseUrl: normalizeBaseUrl(stored.baseUrl || envBaseUrl || DEFAULT_GEMINI_BASE_URL),
     model: stored.model || envModel || DEFAULT_GEMINI_MODEL,
     maxUploadMb: parsePositiveNumber(
       import.meta.env.VITE_GEMINI_MAX_UPLOAD_MB,
-      DEFAULT_MAX_UPLOAD_MB
+      DEFAULT_MAX_UPLOAD_MB,
     ),
     audioTargetUploadMb: parsePositiveNumber(
       import.meta.env.VITE_AUDIO_TARGET_UPLOAD_MB,
-      DEFAULT_AUDIO_TARGET_UPLOAD_MB
+      DEFAULT_AUDIO_TARGET_UPLOAD_MB,
     ),
     maxOutputTokens: parsePositiveNumber(
       import.meta.env.VITE_GEMINI_MAX_OUTPUT_TOKENS,
-      DEFAULT_MAX_OUTPUT_TOKENS
+      DEFAULT_MAX_OUTPUT_TOKENS,
     ),
   };
 };

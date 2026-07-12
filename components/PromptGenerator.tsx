@@ -1,355 +1,355 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Copy, Check, ExternalLink, Wand2, RefreshCw, AudioLines, Minimize, HelpCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowUpRight, Check, Copy, WandSparkles } from 'lucide-react';
+import type { AnalysisMode, SeedAudioContentMode } from '../types';
 
 interface PromptGeneratorProps {
+  embedded?: boolean;
   prompt: string;
-  type: 'music' | 'sfx';
+  seedAudioContentMode?: SeedAudioContentMode;
+  type: AnalysisMode;
 }
 
+type TargetEngine = 'default' | 'seedaudio' | 'suno' | 'udio' | 'stable';
 type MusicVibe = 'none' | 'cinematic' | 'vintage' | 'cyber' | 'haunting';
 type VocalMode = 'none' | 'instrumental' | 'female' | 'male' | 'acoustic';
 type SfxSpace = 'none' | 'dry' | 'cathedral' | 'chiptune';
 type SfxKinetic = 'none' | 'impact' | 'loop';
 
-const musicVibeOptions: Array<{ id: MusicVibe; label: string }> = [
-  { id: 'none', label: '原汁原味 (Default)' },
-  { id: 'cinematic', label: '影视交响 (Epic)' },
-  { id: 'vintage', label: '复古微黄 (Lofi)' },
-  { id: 'cyber', label: '赛博未来 (Cyber)' },
-  { id: 'haunting', label: '悬疑幽暗 (Dark)' },
+const engines: Array<{ id: TargetEngine; label: string }> = [
+  { id: 'default', label: '通用' },
+  { id: 'seedaudio', label: 'SeedAudio' },
+  { id: 'suno', label: 'Suno' },
+  { id: 'udio', label: 'Udio' },
+  { id: 'stable', label: 'Stable Audio' },
 ];
 
-const vocalModeOptions: Array<{ id: VocalMode; label: string }> = [
-  { id: 'none', label: '原样配比 (Keep)' },
-  { id: 'instrumental', label: '纯器乐演奏 (Pure)' },
-  { id: 'female', label: '空灵女声领唱' },
-  { id: 'male', label: '烟熏男声领唱' },
-  { id: 'acoustic', label: '不插电原声 (Acoustic)' },
+const musicVibes: Array<{ id: MusicVibe; label: string }> = [
+  { id: 'none', label: '原始气质' },
+  { id: 'cinematic', label: '影视交响' },
+  { id: 'vintage', label: '复古磁带' },
+  { id: 'cyber', label: '赛博电子' },
+  { id: 'haunting', label: '悬疑幽暗' },
 ];
 
-const sfxSpaceOptions: Array<{ id: SfxSpace; label: string }> = [
-  { id: 'none', label: '默认空间 (Default)' },
-  { id: 'dry', label: '近场干硬录音 (Dry)' },
-  { id: 'cathedral', label: '大教堂大厅 (Cathedral)' },
-  { id: 'chiptune', label: '8-bit 复古电子' },
+const vocalModes: Array<{ id: VocalMode; label: string }> = [
+  { id: 'none', label: '保持声部' },
+  { id: 'instrumental', label: '纯器乐' },
+  { id: 'female', label: '女声领唱' },
+  { id: 'male', label: '男声领唱' },
+  { id: 'acoustic', label: '不插电' },
 ];
 
-const sfxKineticOptions: Array<{ id: SfxKinetic; label: string }> = [
-  { id: 'none', label: '默认动力 (Default)' },
-  { id: 'impact', label: '强瞬态锤击 (Impact)' },
-  { id: 'loop', label: '连绵平缓背景 (Loop)' },
+const sfxSpaces: Array<{ id: SfxSpace; label: string }> = [
+  { id: 'none', label: '原始空间' },
+  { id: 'dry', label: '近场干声' },
+  { id: 'cathedral', label: '大厅混响' },
+  { id: 'chiptune', label: '8-bit 电子' },
 ];
 
-const PromptGenerator: React.FC<PromptGeneratorProps> = ({ prompt: originalPrompt, type }) => {
-  const [copied, setCopied] = useState(false);
-  const [generationComplete, setGenerationComplete] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState(originalPrompt);
+const sfxKinetics: Array<{ id: SfxKinetic; label: string }> = [
+  { id: 'none', label: '保持动态' },
+  { id: 'impact', label: '强化瞬态' },
+  { id: 'loop', label: '无缝循环' },
+];
 
-  // Custom Options States
-  const [targetEngine, setTargetEngine] = useState<'default' | 'suno' | 'udio' | 'stable'>('default');
+const musicVibeText: Record<MusicVibe, string> = {
+  none: '',
+  cinematic:
+    'epic cinematic orchestral arrangement, dramatic dynamic build-up, sweeping brass, staccato strings, theatrical crescendo',
+  vintage:
+    'lo-fi vintage tape warmth, analog saturation, wow and flutter, vinyl texture, intimate room ambience',
+  cyber:
+    'cybernetic synthwave pulse, modular filter sweep, electronic sub-bass, neon arpeggio, industrial glitch texture',
+  haunting:
+    'haunting dark soundscape, suspenseful drones, melancholic atmospheric pads, hollow desolate reverb',
+};
+
+const vocalModeText: Record<VocalMode, string> = {
+  none: '',
+  instrumental:
+    'pure instrumental arrangement, no vocals, precise instrumental layering, clean mix',
+  female:
+    'expressive female lead vocals, emotional soprano, melodic narrative, detailed vocal presence',
+  male: 'intimate baritone male lead vocals, raw singer-songwriter delivery, warm close microphone',
+  acoustic:
+    'fully unplugged acoustic arrangement, organic instrumentation, nylon guitar, upright piano, natural room acoustics',
+};
+
+const sfxSpaceText: Record<SfxSpace, string> = {
+  none: '',
+  dry: 'ultra close-up condenser recording, dry studio acoustics, no room reflection, isolated micro-detail',
+  cathedral: 'large stone hall reverberation, long natural echo tail, spacious stereophonic field',
+  chiptune: 'retro 8-bit sound design, arcade chip synthesis, classic digital waveform',
+};
+
+const sfxKineticText: Record<SfxKinetic, string> = {
+  none: '',
+  impact: 'explosive fast-attack transient, strong peak impact, rapid decay, single-shot power',
+  loop: 'seamless continuous loop, steady background flow, consistent evolving texture',
+};
+
+const normalizePrompt = (value: string): string => value.trim().replace(/\.$/, '');
+
+const formatForEngine = (
+  description: string,
+  engine: TargetEngine,
+  type: Exclude<AnalysisMode, 'video'>,
+): string => {
+  if (engine === 'seedaudio') return `${description}.`;
+  if (type === 'sfx') {
+    if (engine === 'stable')
+      return `Professional sound effect, ${description}, detailed Foley, 96kHz.`;
+    if (engine === 'suno' || engine === 'udio')
+      return `[Sound effect: ${description}] [Precise action trigger, cinematic dynamics]`;
+    return `${description}.`;
+  }
+
+  if (engine === 'suno')
+    return `[Style: ${description}] [Structure: verse, chorus, dynamic transition]`;
+  if (engine === 'udio')
+    return `A detailed studio recording of ${description}. Natural depth, harmonic detail, analog mastering.`;
+  if (engine === 'stable') {
+    const tags = Array.from(
+      new Set(
+        description
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    return `High fidelity audio, ${tags.join(', ')}, professional studio grade.`;
+  }
+  return `${description}.`;
+};
+
+interface OptionGroupProps<T extends string> {
+  label: string;
+  onChange: (value: T) => void;
+  options: Array<{ id: T; label: string }>;
+  value: T;
+}
+
+function OptionGroup<T extends string>({ label, onChange, options, value }: OptionGroupProps<T>) {
+  return (
+    <fieldset>
+      <legend className="mb-2 text-xs font-medium text-[var(--text-muted)]">{label}</legend>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            aria-pressed={value === option.id}
+            className={`rounded-md border px-2.5 py-1.5 text-[0.7rem] font-medium ${
+              value === option.id
+                ? 'accent-surface accent-text'
+                : 'hairline text-[var(--text-muted)] hover:border-[var(--line-strong)] hover:text-[var(--text)]'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+export default function PromptGenerator({
+  embedded = false,
+  prompt,
+  seedAudioContentMode,
+  type,
+}: PromptGeneratorProps) {
+  const [targetEngine, setTargetEngine] = useState<TargetEngine>(
+    type === 'video' ? 'seedaudio' : 'default',
+  );
   const [musicVibe, setMusicVibe] = useState<MusicVibe>('none');
   const [vocalMode, setVocalMode] = useState<VocalMode>('none');
-  
   const [sfxSpace, setSfxSpace] = useState<SfxSpace>('none');
   const [sfxKinetic, setSfxKinetic] = useState<SfxKinetic>('none');
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error' | 'limit'>('idle');
+  const engineOptions = type === 'video' ? engines.filter(({ id }) => id === 'seedaudio') : engines;
 
-  // Multi-option prompt generation logic
-  useEffect(() => {
-    let p = originalPrompt.trim();
-    if (p.endsWith('.')) {
-      p = p.slice(0, -1);
+  const customPrompt = useMemo(() => {
+    if (type === 'video') return prompt.trim();
+    const additions =
+      type === 'music'
+        ? [musicVibeText[musicVibe], vocalModeText[vocalMode]]
+        : [sfxSpaceText[sfxSpace], sfxKineticText[sfxKinetic]];
+    const description = [normalizePrompt(prompt), ...additions].filter(Boolean).join(', ');
+    return formatForEngine(description, targetEngine, type);
+  }, [musicVibe, prompt, sfxKinetic, sfxSpace, targetEngine, type, vocalMode]);
+  const isSeedAudio = targetEngine === 'seedaudio';
+  const isOverLimit = isSeedAudio && customPrompt.length > 2048;
+
+  const copyPrompt = async (): Promise<boolean> => {
+    if (isOverLimit) {
+      setCopyState('limit');
+      return false;
     }
-
-    if (type === 'music') {
-      // 1. Apply Music Vibe enhancements
-      const vibeAdditions = {
-        none: '',
-        cinematic: 'epic cinematic orchestral arrangement, dramatic dynamic build-up, sweeping brass swells, massive staccato string stabs, masterly theatrical crescendo, cinematic tension',
-        vintage: 'lo-fi vintage tape warmth, warm analog saturation, retro wow and flutter, nostalgic 1970s tape machine saturation, vinyl record crackle, dusty room ambiance',
-        cyber: 'cybernetic synthwave club beat, heavy modular synthesizer filter sweep, future electronic sub-bass, pulsing neon arpeggio, industrial glitch textures',
-        haunting: 'haunting dark soundscape, suspenseful drone orchestration, melancholic atmospheric pads, ominous background tension, hollow desolate reverb'
-      };
-
-      // 2. Apply Vocal mode enhancements
-      const vocalAdditions = {
-        none: '',
-        instrumental: 'pure high-definition instrumental solo, absolute zero vocals, tight focus on instrumental layering, clean mix',
-        female: 'featuring expressive soulful female lead vocals, soaring emotional soprano voice, melodic sung narrative, high-fidelity vocal clarity',
-        male: 'featuring intimate raw baritone male lead vocals, raspy acoustic singer-songwriter delivery, genuine storytelling style, close-up warm microphone tracking',
-        acoustic: 'fully unplugged acoustic arrangement, organic stripped-back instrumentation, raw nylon guitar, warm upright acoustic piano, cozy room acoustics'
-      };
-
-      const vibeStr = vibeAdditions[musicVibe];
-      const vocalStr = vocalAdditions[vocalMode];
-
-      let combinedDesc = p;
-      if (vibeStr) combinedDesc += `, ${vibeStr}`;
-      if (vocalStr) combinedDesc += `, ${vocalStr}`;
-
-      // 3. Adapt formatting according to the Selected target engine
-      if (targetEngine === 'suno') {
-        // Extract basic stylistic tags for Suno brackets [Style, Vibe]
-        setCustomPrompt(`[Style: ${combinedDesc.replace(/An? |The? /gi, '')}] [Structure: verse chorus, dynamic transition, high-definition audio] [Tempo: driving key]`);
-      } else if (targetEngine === 'udio') {
-        setCustomPrompt(`A pristine studio recording of: ${combinedDesc}. Rich harmonic frequencies, depth and detail, analog mastering master tape.`);
-      } else if (targetEngine === 'stable') {
-        const keywords = combinedDesc
-          .split(',')
-          .map(kw => kw.trim().toLowerCase())
-          .filter((v, i, a) => a.indexOf(v) === i && v.length > 0)
-          .join(', ');
-        setCustomPrompt(`High fidelity audio, ${keywords}, 44.1kHz, professional studio grade.`);
-      } else {
-        setCustomPrompt(`${combinedDesc}.`);
-      }
-
-    } else {
-      // SFX Customizations
-      const spaceAdditions = {
-        none: '',
-        dry: 'ultra close-up condenser recording, raw micro-detail, dry studio acoustics, zero room reflection, high isolation',
-        cathedral: 'massive stone hall reverberation, long natural echo tail, spacious field recording, wet stereophonic spacing',
-        chiptune: 'retro 8-bit sound design, digital synthesizer arcade chip, synthetic classic chiptune waveform'
-      };
-
-      const kineticAdditions = {
-        none: '',
-        impact: 'explosive fast-attack transient startup, crushing peak impact velocity, rapid decay, single shot hit power',
-        loop: 'seamlessly looping continuous ambiance, steady background flow, dynamic droning loop, consistent texture'
-      };
-
-      const spaceStr = spaceAdditions[sfxSpace];
-      const kineticStr = kineticAdditions[sfxKinetic];
-
-      let combinedSFX = p;
-      if (spaceStr) combinedSFX += `, ${spaceStr}`;
-      if (kineticStr) combinedSFX += `, ${kineticStr}`;
-
-      if (targetEngine === 'stable') {
-        setCustomPrompt(`Pro sound effect, ${combinedSFX}, highly detailed Foley, 96kHz.`);
-      } else if (targetEngine === 'suno' || targetEngine === 'udio') {
-        setCustomPrompt(`[Sound Effect: ${combinedSFX}] [Action trigger, ultra-realistic digital Foley, cinematic dynamic]`);
-      } else {
-        setCustomPrompt(`${combinedSFX}.`);
-      }
+    try {
+      await navigator.clipboard.writeText(customPrompt);
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 2200);
+      return true;
+    } catch {
+      setCopyState('error');
+      return false;
     }
-  }, [originalPrompt, type, targetEngine, musicVibe, vocalMode, sfxSpace, sfxKinetic]);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(customPrompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleGenerate = () => {
-    navigator.clipboard.writeText(customPrompt);
-    setGenerationComplete(true);
-    
-    let targetUrl = 'https://suno.com';
-    if (type === 'music') {
-      if (targetEngine === 'udio') targetUrl = 'https://www.udio.com';
-      else if (targetEngine === 'stable') targetUrl = 'https://www.stableaudio.com';
-    } else {
-      targetUrl = 'https://elevenlabs.io/sound-effects';
-      if (targetEngine === 'stable') targetUrl = 'https://www.stableaudio.com';
+  const openGenerator = async () => {
+    if (isSeedAudio) {
+      await copyPrompt();
+      return;
     }
-    
-    window.open(targetUrl, '_blank');
-  };
+    const url =
+      type === 'sfx'
+        ? targetEngine === 'stable'
+          ? 'https://www.stableaudio.com'
+          : 'https://elevenlabs.io/sound-effects'
+        : targetEngine === 'udio'
+          ? 'https://www.udio.com'
+          : targetEngine === 'stable'
+            ? 'https://www.stableaudio.com'
+            : 'https://suno.com';
+    const targetWindow = window.open('about:blank', '_blank');
+    if (!targetWindow) {
+      setCopyState('error');
+      return;
+    }
+    targetWindow.opener = null;
 
-  const accentColor = type === 'music' ? 'text-[var(--color-accent)]' : 'text-[#00f0ff]';
-  const borderAccent = type === 'music' ? 'border-[var(--color-accent)]/30' : 'border-[#00f0ff]/30';
-  const hoverAccent = type === 'music' ? 'hover:bg-[var(--color-accent)] hover:text-white' : 'hover:bg-[#00f0ff] hover:text-black';
+    const copied = await copyPrompt();
+    if (!copied) {
+      targetWindow.close();
+      return;
+    }
+    targetWindow.location.replace(url);
+  };
 
   return (
-    <div className="glass-panel p-8 mt-8 relative overflow-hidden">
-      <div className={`absolute top-0 right-0 w-80 h-80 ${type === 'music' ? 'bg-[var(--color-accent)]/5' : 'bg-[#00f0ff]/5'} blur-[100px] rounded-full pointer-events-none`}></div>
-      
-      {/* Heading */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 pb-6 border-b border-white/5 relative z-10 gap-4">
-        <div>
-          <h3 className={`text-xl font-bold flex items-center gap-2.5 ${accentColor}`}>
-            <Wand2 size={22} className="animate-pulse" />
-            AI 生成闭环 & 深度提示词定制 (Prompt Workshop)
-          </h3>
-          <p className="text-xs text-slate-400 mt-1">
-            通过高精密度的音视频工程选项微调此提示词，可直接用于主流 AI 音频模型合成特定变体
+    <section
+      className={embedded ? 'overflow-hidden' : 'surface mt-6 overflow-hidden'}
+      aria-labelledby="prompt-workshop-title"
+    >
+      <div className="grid lg:grid-cols-[0.82fr_1.18fr]">
+        <div className="border-b hairline p-6 sm:p-8 lg:border-r lg:border-b-0">
+          <p className="eyebrow">Prompt workshop</p>
+          <h2 id="prompt-workshop-title" className="mt-3 text-2xl font-semibold tracking-[-0.04em]">
+            {type === 'video' ? 'SeedAudio 声音方案' : '生成声音变体'}
+          </h2>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-[var(--text-muted)]">
+            {type === 'video'
+              ? '结构化声音设计稿与可执行 text_prompt 分开呈现，避免把作者标题带入生成请求。'
+              : '调整生成平台与声音方向，提示词会即时重组。复制后可直接进入对应平台。'}
           </p>
-        </div>
-        <div className="flex gap-2">
-          {type === 'music' ? (
-            <span className="text-xs font-mono text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-2.5 py-1 rounded-md border border-[var(--color-accent)]/20 font-semibold shadow-sm">Music Generator</span>
-          ) : (
-            <span className="text-xs font-mono text-[#00f0ff] bg-[#00f0ff]/10 px-2.5 py-1 rounded-md border border-[#00f0ff]/20 font-semibold shadow-sm">SFX Generator</span>
-          )}
-        </div>
-      </div>
 
-      {/* Control Station Panel */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6 relative z-10">
-        
-        {/* Row 1: Target Engine */}
-        <div className="flex flex-col gap-2">
-          <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-            1. 适配特定生成大模型格式
-          </label>
-          <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-            <button
-              onClick={() => setTargetEngine('default')}
-              className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all ${targetEngine === 'default' ? 'bg-white/10 text-white shadow-sm font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-            >
-              通用叙述 (Prose)
-            </button>
-            <button
-              onClick={() => setTargetEngine('suno')}
-              className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all ${targetEngine === 'suno' ? 'bg-[var(--color-accent)]/25 text-white border border-[var(--color-accent)]/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-            >
-              Suno v4 标签组
-            </button>
-            <button
-              onClick={() => setTargetEngine('udio')}
-              className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all ${targetEngine === 'udio' ? 'bg-amber-500/25 text-amber-200 border border-amber-500/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-            >
-              Udio 纯色模式
-            </button>
-            <button
-              onClick={() => setTargetEngine('stable')}
-              className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all ${targetEngine === 'stable' ? 'bg-blue-500/25 text-blue-200 border border-blue-500/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-            >
-              Stable Audio 标签
-            </button>
+          <div className="mt-7 space-y-5">
+            <OptionGroup
+              label="目标平台"
+              options={engineOptions}
+              value={targetEngine}
+              onChange={setTargetEngine}
+            />
+            {type === 'music' ? (
+              <>
+                <OptionGroup
+                  label="气质"
+                  options={musicVibes}
+                  value={musicVibe}
+                  onChange={setMusicVibe}
+                />
+                <OptionGroup
+                  label="声部"
+                  options={vocalModes}
+                  value={vocalMode}
+                  onChange={setVocalMode}
+                />
+              </>
+            ) : type === 'sfx' ? (
+              <>
+                <OptionGroup
+                  label="空间"
+                  options={sfxSpaces}
+                  value={sfxSpace}
+                  onChange={setSfxSpace}
+                />
+                <OptionGroup
+                  label="动态"
+                  options={sfxKinetics}
+                  value={sfxKinetic}
+                  onChange={setSfxKinetic}
+                />
+              </>
+            ) : null}
+            {isSeedAudio && (
+              <div className="border-t hairline pt-4 text-xs leading-5 text-[var(--text-muted)]">
+                <p>
+                  content_mode ·{' '}
+                  <span className="font-mono accent-text">
+                    {seedAudioContentMode ?? (type === 'sfx' ? 'nonverbal' : 'mixed')}
+                  </span>
+                </p>
+                <p className="mt-2">
+                  整合样音适合快速听氛围；需要精确卡画面时，应使用定时素材与后期混音。
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Row 2 & 3: Custom Vibe or Space */}
-        {type === 'music' ? (
-          <>
-            {/* Music option A: Vibe Booster */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                2. 情绪氛围强化 (Themes)
-              </label>
-              <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {musicVibeOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setMusicVibe(item.id)}
-                    className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${musicVibe === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-orange-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Music option B: Vocals / Instrument structure */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                3. 声部配器形态 (Structure)
-              </label>
-              <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {vocalModeOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setVocalMode(item.id)}
-                    className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${vocalMode === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-orange-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            {/* SFX Option A: Spatial Reverb */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                2. 空间混响特征 (Acoustic Space)
-              </label>
-              <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {sfxSpaceOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setSfxSpace(item.id)}
-                    className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${sfxSpace === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-cyan-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* SFX Option B: Kinetic Dynamics */}
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                3. 声音瞬态冲能 (Dynamics)
-              </label>
-              <div className="grid grid-cols-2 gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/5">
-                {sfxKineticOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setSfxKinetic(item.id)}
-                    className={`text-xs py-2 px-2.5 rounded-lg font-medium transition-all text-left truncate ${sfxKinetic === item.id ? 'bg-white/10 text-white font-semibold border-l-2 border-cyan-500 pl-2' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Live Text Field */}
-      <div className="relative group z-10">
-        <div className="absolute -top-2.5 left-4 px-2 py-0.5 bg-[#090a0f] border border-white/5 rounded text-[10px] text-slate-500 font-mono flex items-center gap-1 z-20">
-          <AudioLines size={10} className={accentColor} /> 
-          实时生成的提示词 (Interactive Prompt Out)
-        </div>
-        <div className="bg-black/40 border border-white/10 rounded-2xl p-5 pr-14 font-mono text-sm text-slate-300 leading-relaxed min-h-[96px] shadow-inner font-light">
-          {customPrompt}
-        </div>
-        
-        {/* Actions inside text field */}
-        <div className="absolute top-4 right-4 flex flex-col gap-2">
-          <button 
-            onClick={handleCopy}
-            className="p-2.5 bg-white/5 hover:bg-white/10 hover:text-white rounded-xl transition-all text-slate-400 border border-white/5 shadow"
-            title="一键复制"
+        <div className="flex flex-col p-6 sm:p-8">
+          <div className="flex items-center justify-between gap-4">
+            <span className="flex items-center gap-2 text-xs font-medium text-[var(--text-muted)]">
+              <WandSparkles size={14} className="accent-text" />
+              实时提示词
+            </span>
+            <button
+              type="button"
+              onClick={() => void copyPrompt()}
+              disabled={isOverLimit}
+              className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-black/[0.04] hover:text-[var(--text)]"
+            >
+              {copyState === 'copied' ? (
+                <Check size={14} className="accent-text" />
+              ) : (
+                <Copy size={14} />
+              )}
+              {copyState === 'copied' ? '已复制' : '复制'}
+            </button>
+          </div>
+          <div className="mt-4 min-h-40 flex-1 rounded-xl bg-[#1c221e] p-5 font-mono text-[0.78rem] leading-6 text-[#eff5f0]">
+            {customPrompt}
+          </div>
+          {isSeedAudio && (
+            <p
+              className={`mt-2 text-right font-mono text-[0.64rem] ${isOverLimit ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}`}
+            >
+              {customPrompt.length} / 2048 characters
+            </p>
+          )}
+          {copyState === 'error' && (
+            <p className="mt-3 text-xs text-[var(--danger)]" role="alert">
+              无法写入剪贴板，请检查浏览器权限。
+            </p>
+          )}
+          {copyState === 'limit' && (
+            <p className="mt-3 text-xs text-[var(--danger)]" role="alert">
+              SeedAudio text_prompt 超过 2048 字符，请先压缩内容。
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void openGenerator()}
+            disabled={isOverLimit}
+            className="accent-bg mt-5 inline-flex items-center justify-center gap-2 self-start rounded-lg px-4 py-2.5 text-xs font-bold"
           >
-            {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+            {isSeedAudio ? '复制 SeedAudio Prompt' : '复制并打开生成平台'}
+            {isSeedAudio ? <Copy size={15} /> : <ArrowUpRight size={15} />}
           </button>
         </div>
       </div>
-
-      {/* Copy & Go Button */}
-      <div className="mt-6 flex flex-col sm:flex-row items-center gap-4 relative z-10">
-        <button
-          onClick={handleGenerate}
-          className={`flex-1 w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-bold transition-all duration-300 border bg-white text-black hover:bg-white/95 cursor-pointer shadow-lg`}
-        >
-          <Sparkles size={18} className="text-orange-500 animate-spin-slow" />
-          <span>前往 AI 生成平台测试</span>
-        </button>
-
-        {copied && (
-          <div className="flex-1 w-full sm:w-auto bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-3.5 rounded-xl text-sm flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2">
-            <Check size={18} className="shrink-0 animate-bounce" />
-            <div>
-              <p className="font-bold text-xs">生成就绪！最新微调提示词已存入剪贴板</p>
-              <p className="text-slate-400 text-[10px] mt-0.5">可以直接粘贴进 Suno, Udio 或 ElevenLabs</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    </section>
   );
-};
-
-export default PromptGenerator;
+}

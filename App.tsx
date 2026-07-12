@@ -1,849 +1,613 @@
-import React, { useMemo, useState, useRef } from 'react';
-import { motion } from 'motion/react';
 import {
-  Music,
-  Activity,
-  Clock,
-  Disc,
-  FileAudio,
-  Info,
-  Mic2,
-  AlertTriangle,
-  Loader2,
-  ListMusic,
-  ExternalLink,
-  Sparkles,
-  Hammer,
-  Tag,
-  Volume2,
-  Layers,
-  PlayCircle,
-  RotateCcw as RotateCcwIcon,
-  Search,
-  Settings,
-  History,
-} from 'lucide-react';
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
+import { AlertTriangle, ArrowRight, KeyRound, RotateCcw } from 'lucide-react';
+import AppHeader from './components/AppHeader';
 import FileUpload from './components/FileUpload';
-import AnalysisVisualizer from './components/AnalysisVisualizer';
-import StockLinks from './components/StockLinks';
-import WaveformPlayer, { WaveformPlayerRef } from './components/WaveformPlayer';
-import ExportMenu from './components/ExportMenu';
-import PromptGenerator from './components/PromptGenerator';
+import HistoryPanel from './components/HistoryPanel';
+import ModeSelector from './components/ModeSelector';
+import ProcessingView from './components/ProcessingView';
 import SettingsModal from './components/SettingsModal';
-import ReferenceTrackLinks from './components/ReferenceTrackLinks';
-import { analyzeMusicMedia } from './services/geminiService';
-import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig';
-import { prepareAudioForAnalysis } from './services/audioUtils';
-import type { AudioPreparationResult } from './services/audioUtils';
-import { ANALYSIS_HISTORY_LIMIT, cacheAnalysisHistoryItem, loadAnalysisHistory } from './services/analysisHistory';
+import {
+  cacheAnalysisHistoryItem,
+  clearAnalysisHistory,
+  deleteAnalysisHistoryItem,
+  loadAnalysisHistory,
+  toggleAnalysisHistoryFavorite,
+  updateAnalysisHistoryItem,
+} from './services/analysisHistory';
 import type { AnalysisHistoryItem } from './services/analysisHistory';
+import {
+  clearAnalysisAudio,
+  deleteAnalysisAudio,
+  loadAnalysisAudio,
+  pruneAnalysisAudio,
+  saveAnalysisAudio,
+} from './services/analysisAudioStore';
+import { extractAudioRange, prepareAudioForAnalysis } from './services/audioUtils';
+import type { AudioPreparationResult } from './services/audioUtils';
+import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig';
+import { analyzeMedia } from './services/geminiService';
+import { formatTimestamp } from './services/timecode';
 import { getFileSizeBucket, trackUsageEvent } from './services/usageAnalytics';
+import { readVideoDuration } from './services/videoUtils';
 import { AnalysisState } from './types';
-import type { MusicAnalysisResult } from './types';
+import type { AnalysisMode, AnalysisResult } from './types';
 
-const API_KEY_REGISTER_URL = 'https://new.12ai.org/register?aff=PYE8';
-const IMAGINE_WORKBENCH_URL = 'https://imagine-workbench.pages.dev/';
+const AnalysisReport = lazy(() => import('./components/AnalysisReport'));
 
-// Stat Card Component Helper
-const StatCard = ({ icon, label, value, isLongText = false }: { icon: React.ReactNode, label: string, value: string | number, isLongText?: boolean }) => (
-  <div className="glass-panel p-4 flex flex-col justify-between h-full">
-    <div className="flex items-center gap-2 mb-2 text-slate-400">
-      <div className="text-[var(--color-accent)]">{icon}</div>
-      <span className="text-xs font-bold uppercase tracking-wider">{label}</span>
-    </div>
-    <div className={`${isLongText ? 'text-sm font-medium leading-tight' : 'text-2xl font-mono font-bold'} text-slate-100`}>
-      {value}
-    </div>
-  </div>
-);
-
-const getErrorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-};
-
-const formatBytes = (bytes: number): string => {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-};
-
-const describePreparedFile = (result: AudioPreparationResult): string => {
-  if (!result.wasTranscoded) return `上传原文件 ${formatBytes(result.processedBytes)}`;
-  return `已本地转码压缩：${formatBytes(result.originalBytes)} -> ${formatBytes(result.processedBytes)}，${result.sampleRate / 1000}kHz 单声道 WAV`;
-};
-
-const formatHistoryTime = (value: string): string => (
-  new Date(value).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-);
-
-interface AnalysisHistoryDateGroup {
-  dateKey: string;
-  label: string;
-  items: AnalysisHistoryItem[];
+interface AppState {
+  analysis: AnalysisResult | null;
+  error: string | null;
+  fileName: string | null;
+  mode: AnalysisMode;
+  originalFile: File | null;
+  processingDetail: string;
+  processingSummary: string;
+  processingStage: 'prepare' | 'detect' | 'analyze';
+  processingTitle: string;
+  status: AnalysisState;
 }
 
-const getLocalDateKey = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-const formatHistoryDateLabel = (dateKey: string): string => {
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-
-  if (dateKey === getLocalDateKey(today)) return '今天';
-  if (dateKey === getLocalDateKey(yesterday)) return '昨天';
-
-  const [year, month, day] = dateKey.split('-');
-  return `${year}年${month}月${day}日`;
-};
-
-const groupAnalysisHistoryByDate = (history: AnalysisHistoryItem[]): AnalysisHistoryDateGroup[] => {
-  const groups: AnalysisHistoryDateGroup[] = [];
-
-  history.forEach((item) => {
-    const dateKey = getLocalDateKey(new Date(item.createdAt));
-    const group = groups.find((candidate) => candidate.dateKey === dateKey);
-
-    if (group) {
-      group.items.push(item);
-      return;
+type AppAction =
+  | { type: 'set-mode'; mode: AnalysisMode }
+  | { type: 'start'; file: File }
+  | {
+      type: 'progress';
+      title: string;
+      detail: string;
+      stage?: 'prepare' | 'detect' | 'analyze';
     }
+  | { type: 'analyzing'; summary: string }
+  | { type: 'complete'; analysis: AnalysisResult }
+  | { type: 'update-analysis'; analysis: AnalysisResult }
+  | { type: 'fail'; message: string }
+  | { type: 'restore'; item: AnalysisHistoryItem; file: File | null }
+  | { type: 'reset' };
 
-    groups.push({
-      dateKey,
-      label: formatHistoryDateLabel(dateKey),
-      items: [item],
-    });
-  });
-
-  return groups;
+const initialState: AppState = {
+  analysis: null,
+  error: null,
+  fileName: null,
+  mode: 'music',
+  originalFile: null,
+  processingDetail: '',
+  processingSummary: '',
+  processingStage: 'prepare',
+  processingTitle: '',
+  status: AnalysisState.IDLE,
 };
 
-const getHistoryTitle = (item: AnalysisHistoryItem): string => {
-  if (item.analysis.type === 'sfx') return item.analysis.sfx?.name || '音效分析';
-  return item.analysis.mainGenre || '音乐分析';
+const appReducer = (state: AppState, action: AppAction): AppState => {
+  switch (action.type) {
+    case 'set-mode':
+      return state.status === AnalysisState.IDLE ? { ...state, mode: action.mode } : state;
+    case 'start':
+      return {
+        ...state,
+        analysis: null,
+        error: null,
+        fileName: action.file.name,
+        originalFile: action.file,
+        processingDetail: '',
+        processingSummary: '',
+        processingStage: 'prepare',
+        processingTitle: '正在读取媒体',
+        status: AnalysisState.CONVERTING,
+      };
+    case 'progress':
+      return {
+        ...state,
+        processingTitle: action.title,
+        processingDetail: action.detail,
+        processingStage: action.stage ?? state.processingStage,
+      };
+    case 'analyzing':
+      return {
+        ...state,
+        processingDetail:
+          state.mode === 'video'
+            ? '模型正在诊断镜头结构、节奏、画面完成度、包装表达与声音线索。'
+            : '模型正在识别结构、节奏、音色与剪辑线索。',
+        processingSummary: action.summary,
+        processingStage: state.mode === 'video' ? 'detect' : 'analyze',
+        processingTitle: state.mode === 'video' ? '正在诊断视频结构' : '正在理解声音结构',
+        status: AnalysisState.ANALYZING,
+      };
+    case 'complete':
+      return { ...state, analysis: action.analysis, status: AnalysisState.COMPLETE };
+    case 'update-analysis':
+      return state.status === AnalysisState.COMPLETE
+        ? { ...state, analysis: action.analysis }
+        : state;
+    case 'fail':
+      return { ...state, error: action.message, status: AnalysisState.ERROR };
+    case 'restore':
+      return {
+        ...state,
+        analysis: action.item.analysis,
+        error: null,
+        fileName: action.item.fileName,
+        mode: action.item.analysisMode,
+        originalFile: action.file,
+        processingDetail: '',
+        processingSummary: action.item.processingSummary,
+        processingStage: 'analyze',
+        processingTitle: '',
+        status: AnalysisState.COMPLETE,
+      };
+    case 'reset':
+      return { ...initialState, mode: state.mode };
+  }
 };
 
-function App() {
-  const [file, setFile] = useState<File | null>(null);
-  const [activeFileName, setActiveFileName] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<MusicAnalysisResult | null>(null);
-  const [status, setStatus] = useState<AnalysisState>(AnalysisState.IDLE);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [analysisMode, setAnalysisMode] = useState<'music' | 'sfx'>('music');
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : '分析失败，请重试。';
+
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
+
+const describePreparedFile = (result: AudioPreparationResult, sourceIsVideo: boolean): string => {
+  if (!result.wasTranscoded) return `原始音频 ${formatBytes(result.processedBytes)}，无需转码`;
+  const source = sourceIsVideo ? '视频音轨' : '音频';
+  return `${source} ${formatBytes(result.originalBytes)} → ${formatBytes(result.processedBytes)} · mono ${result.sampleRate / 1000} kHz`;
+};
+
+export default function App() {
+  const [state, dispatch] = useReducer(appReducer, initialState);
+  const [analysisHistory, setAnalysisHistory] =
+    useState<AnalysisHistoryItem[]>(loadAnalysisHistory);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryItem[]>(() => loadAnalysisHistory());
-  const [historyNotice, setHistoryNotice] = useState(
-    `历史分析会保存在当前浏览器，最多保留 ${ANALYSIS_HISTORY_LIMIT} 条，不包含音频原文件。`
+  const [isPreparingRange, setIsPreparingRange] = useState(false);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+  const activeJobRef = useRef<{ controller: AbortController; id: number } | null>(null);
+  const nextJobIdRef = useRef(0);
+  const currentHistoryItemIdRef = useRef<string | null>(null);
+  const restoreRequestIdRef = useRef(0);
+  const rangePreparationRef = useRef<AbortController | null>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
+  const hasApiKey = hasGeminiApiKey();
+
+  const isProcessing =
+    state.status === AnalysisState.CONVERTING || state.status === AnalysisState.ANALYZING;
+  const canReset = state.status !== AnalysisState.IDLE;
+  const currentJobId = () => activeJobRef.current?.id;
+
+  const stopActiveJob = useCallback(() => {
+    activeJobRef.current?.controller.abort();
+    activeJobRef.current = null;
+    rangePreparationRef.current?.abort();
+    rangePreparationRef.current = null;
+    restoreRequestIdRef.current += 1;
+  }, []);
+
+  useEffect(
+    () => () => {
+      stopActiveJob();
+    },
+    [stopActiveJob],
   );
-  const [processingTitle, setProcessingTitle] = useState('');
-  const [processingDetail, setProcessingDetail] = useState('');
-  const [processingSummary, setProcessingSummary] = useState('');
-  const groupedAnalysisHistory = useMemo(
-    () => groupAnalysisHistoryByDate(analysisHistory),
-    [analysisHistory]
-  );
-  
-  // Ref for the content we want to export
-  const resultsRef = useRef<HTMLDivElement>(null);
-  // Ref for the audio player to control seeking
-  const playerRef = useRef<WaveformPlayerRef>(null);
 
-  const handleFileSelect = async (selectedFile: File) => {
-    setFile(selectedFile);
-    setActiveFileName(selectedFile.name);
-    setAnalysis(null);
-    setErrorMsg(null);
-    setProcessingSummary('');
-    setStatus(AnalysisState.CONVERTING);
+  const reset = useCallback(() => {
+    stopActiveJob();
+    currentHistoryItemIdRef.current = null;
+    setHistoryNotice(null);
+    dispatch({ type: 'reset' });
+  }, [stopActiveJob]);
 
-    const analysisStartedAt = performance.now();
-    const originalSizeBucket = getFileSizeBucket(selectedFile.size);
-    const config = getGeminiRuntimeConfig();
-    trackUsageEvent({
-      eventName: 'analysis_started',
-      mode: analysisMode,
-      originalSizeBucket,
-      model: config.model,
-    });
+  const analyzeFile = useCallback(
+    async (selectedFile: File) => {
+      if (!hasGeminiApiKey()) {
+        setIsSettingsOpen(true);
+        return;
+      }
 
-    try {
-      const targetUploadMb = Math.min(config.audioTargetUploadMb, config.maxUploadMb);
-      const preparedAudio = await prepareAudioForAnalysis(selectedFile, {
-        maxBytes: targetUploadMb * 1024 * 1024,
-        onProgress: ({ title, detail }) => {
-          setProcessingTitle(title);
-          setProcessingDetail(detail);
-        },
-      });
-      const fileToAnalyze = preparedAudio.file;
-      const preparedSummary = describePreparedFile(preparedAudio);
-      setFile(fileToAnalyze);
-      setProcessingSummary(preparedSummary);
-      setProcessingTitle('正在上传并分析');
-      setProcessingDetail('只上传处理后的分析音频，模型正在识别节奏、音色、段落与剪辑卡点。');
-      setStatus(AnalysisState.ANALYZING);
+      setHistoryNotice(null);
+      stopActiveJob();
+      currentHistoryItemIdRef.current = null;
+      const job = { controller: new AbortController(), id: nextJobIdRef.current + 1 };
+      nextJobIdRef.current = job.id;
+      activeJobRef.current = job;
+      dispatch({ type: 'start', file: selectedFile });
 
-      const result = await analyzeMusicMedia(fileToAnalyze, analysisMode);
-      setAnalysis(result);
-      setStatus(AnalysisState.COMPLETE);
+      const startedAt = performance.now();
+      const originalSizeBucket = getFileSizeBucket(selectedFile.size);
+      const config = getGeminiRuntimeConfig();
+      const mode = state.mode;
       trackUsageEvent({
-        eventName: 'analysis_completed',
-        mode: analysisMode,
+        eventName: 'analysis_started',
+        mode,
         originalSizeBucket,
-        processedSizeBucket: getFileSizeBucket(preparedAudio.processedBytes),
-        durationMs: Math.round(performance.now() - analysisStartedAt),
-        wasTranscoded: preparedAudio.wasTranscoded,
         model: config.model,
       });
 
       try {
+        let analysisFile = selectedFile;
+        let processedBytes = selectedFile.size;
+        let wasTranscoded = false;
+        let summary = `原始视频 ${formatBytes(selectedFile.size)} · 视频诊断与剪辑分析`;
+        let videoDurationSeconds: number | undefined;
+
+        if (mode === 'video') {
+          if (selectedFile.type !== 'video/mp4') {
+            throw new Error('视频分析当前仅支持 MP4 文件。');
+          }
+          dispatch({
+            type: 'progress',
+            title: '正在准备原始视频',
+            detail: '保留完整画面与声音，不提取或转存帧图。',
+          });
+          videoDurationSeconds = await readVideoDuration(selectedFile, job.controller.signal);
+          summary = `原始视频 ${formatBytes(selectedFile.size)} · ${formatTimestamp(videoDurationSeconds)} · 视频诊断与剪辑分析`;
+        } else {
+          const targetUploadMb = Math.min(config.audioTargetUploadMb, config.maxUploadMb);
+          const preparedAudio = await prepareAudioForAnalysis(selectedFile, {
+            maxBytes: targetUploadMb * 1024 * 1024,
+            signal: job.controller.signal,
+            onProgress: ({ title, detail }) => {
+              if (currentJobId() === job.id) dispatch({ type: 'progress', title, detail });
+            },
+          });
+          analysisFile = preparedAudio.file;
+          processedBytes = preparedAudio.processedBytes;
+          wasTranscoded = preparedAudio.wasTranscoded;
+          summary = describePreparedFile(preparedAudio, selectedFile.type.startsWith('video/'));
+        }
+        job.controller.signal.throwIfAborted();
+
+        dispatch({ type: 'analyzing', summary });
+        const result = await analyzeMedia(
+          analysisFile,
+          mode,
+          job.controller.signal,
+          videoDurationSeconds,
+          ({ stage, title, detail }) => {
+            if (currentJobId() === job.id) {
+              dispatch({ type: 'progress', stage, title, detail });
+            }
+          },
+        );
+        if (currentJobId() !== job.id) return;
+
+        dispatch({ type: 'complete', analysis: result });
+        trackUsageEvent({
+          eventName: 'analysis_completed',
+          mode,
+          originalSizeBucket,
+          processedSizeBucket: getFileSizeBucket(processedBytes),
+          durationMs: Math.round(performance.now() - startedAt),
+          wasTranscoded,
+          model: config.model,
+        });
+
         const nextHistory = cacheAnalysisHistoryItem({
           fileName: selectedFile.name,
           fileSize: selectedFile.size,
-          analysisMode,
-          processingSummary: preparedSummary,
+          analysisMode: mode,
+          processingSummary: summary,
           analysis: result,
         });
         setAnalysisHistory(nextHistory);
-        setHistoryNotice(`已缓存本次分析结果：${nextHistory.length}/${ANALYSIS_HISTORY_LIMIT} 条，超出后自动移除最旧记录。`);
-      } catch (cacheError: unknown) {
-        setHistoryNotice(`分析已完成，但本地历史缓存失败：${getErrorMessage(cacheError, '浏览器存储不可用。')}`);
+        currentHistoryItemIdRef.current = nextHistory[0].id;
+        try {
+          await pruneAnalysisAudio(nextHistory.map((item) => item.id));
+          if (mode === 'video') {
+            setHistoryNotice('视频报告已保存；为控制空间，不保存原始视频或帧图。');
+          } else {
+            await saveAnalysisAudio(nextHistory[0].id, analysisFile);
+            setHistoryNotice('报告、音频与波形已保存到当前浏览器。');
+          }
+        } catch (storageError: unknown) {
+          setHistoryNotice(`报告已保存，但媒体存储清理失败：${getErrorMessage(storageError)}`);
+        }
+      } catch (error: unknown) {
+        if (job.controller.signal.aborted || currentJobId() !== job.id) return;
+        const message = getErrorMessage(error);
+        trackUsageEvent({
+          eventName: 'analysis_failed',
+          mode,
+          originalSizeBucket,
+          durationMs: Math.round(performance.now() - startedAt),
+          model: config.model,
+          errorMessage: message,
+        });
+        dispatch({ type: 'fail', message });
+      } finally {
+        if (currentJobId() === job.id) activeJobRef.current = null;
       }
-    } catch (err: unknown) {
-      console.error(err);
-      const message = getErrorMessage(err, "分析文件失败。");
-      trackUsageEvent({
-        eventName: 'analysis_failed',
-        mode: analysisMode,
-        originalSizeBucket,
-        durationMs: Math.round(performance.now() - analysisStartedAt),
-        model: config.model,
-        errorMessage: message,
-      });
-      setStatus(AnalysisState.ERROR);
-      setErrorMsg(message);
+    },
+    [state.mode, stopActiveJob],
+  );
+
+  const deleteHistory = async (id: string) => {
+    if (currentHistoryItemIdRef.current === id) currentHistoryItemIdRef.current = null;
+    setAnalysisHistory(deleteAnalysisHistoryItem(id));
+    try {
+      await deleteAnalysisAudio(id);
+      setHistoryNotice('已删除历史报告与关联音频。');
+    } catch (storageError: unknown) {
+      setHistoryNotice(`历史报告已删除，但关联音频清理失败：${getErrorMessage(storageError)}`);
     }
   };
 
-  const handleReset = () => {
-    setFile(null);
-    setActiveFileName(null);
-    setAnalysis(null);
-    setProcessingSummary('');
-    setProcessingTitle('');
-    setProcessingDetail('');
-    setStatus(AnalysisState.IDLE);
-  };
-
-  const handleRestoreHistory = (item: AnalysisHistoryItem) => {
-    setFile(null);
-    setActiveFileName(item.fileName);
-    setAnalysisMode(item.analysisMode);
-    setAnalysis(item.analysis);
-    setProcessingSummary(item.processingSummary);
-    setProcessingTitle('');
-    setProcessingDetail('');
-    setErrorMsg(null);
-    setStatus(AnalysisState.COMPLETE);
-    setHistoryNotice(`已载入历史分析：${item.fileName}。历史缓存不包含音频原文件，播放器需重新上传。`);
-  };
-
-  // Parses "MM:SS" string to seconds
-  const parseTimestamp = (timeStr: string): number => {
-    const match = timeStr.match(/(\d+):(\d+)/);
-    if (match) {
-        const minutes = parseInt(match[1], 10);
-        const seconds = parseInt(match[2], 10);
-        return minutes * 60 + seconds;
-    }
-    return 0;
-  };
-
-  const handleJumpToSegment = (timestamp: string) => {
-    if (playerRef.current) {
-        const seconds = parseTimestamp(timestamp);
-        playerRef.current.seekTo(seconds);
+  const clearHistory = async () => {
+    currentHistoryItemIdRef.current = null;
+    setAnalysisHistory(clearAnalysisHistory());
+    try {
+      await clearAnalysisAudio();
+      setHistoryNotice('历史报告与关联音频已清空。');
+    } catch (storageError: unknown) {
+      setHistoryNotice(`历史报告已清空，但关联音频清理失败：${getErrorMessage(storageError)}`);
     }
   };
+
+  const toggleFavorite = (id: string) => {
+    setAnalysisHistory(toggleAnalysisHistoryFavorite(id));
+  };
+
+  const restoreHistory = async (item: AnalysisHistoryItem) => {
+    stopActiveJob();
+    const restoreRequestId = restoreRequestIdRef.current + 1;
+    restoreRequestIdRef.current = restoreRequestId;
+    currentHistoryItemIdRef.current = item.id;
+    if (item.analysisMode === 'video') {
+      dispatch({ type: 'restore', item, file: null });
+      setHistoryNotice('视频报告已恢复；原始视频与帧图不会写入历史记录。');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setHistoryNotice('正在恢复历史报告与音频…');
+    try {
+      const file = await loadAnalysisAudio(item.id);
+      if (restoreRequestIdRef.current !== restoreRequestId) return;
+      dispatch({ type: 'restore', item, file });
+      setHistoryNotice(
+        file ? '历史报告、音频与波形已恢复。' : '历史报告已恢复；这条旧记录没有关联音频。',
+      );
+    } catch (storageError: unknown) {
+      if (restoreRequestIdRef.current !== restoreRequestId) return;
+      dispatch({ type: 'restore', item, file: null });
+      setHistoryNotice(`报告已恢复，但关联音频无法读取：${getErrorMessage(storageError)}`);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const analyzeRange = useCallback(
+    async (start: number, end: number) => {
+      if (!state.originalFile) {
+        setHistoryNotice('当前报告没有可用于局部分析的音频。');
+        return;
+      }
+
+      rangePreparationRef.current?.abort();
+      const controller = new AbortController();
+      rangePreparationRef.current = controller;
+      setIsPreparingRange(true);
+      setHistoryNotice(null);
+      try {
+        const rangeFile = await extractAudioRange(
+          state.originalFile,
+          start,
+          end,
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        rangePreparationRef.current = null;
+        await analyzeFile(rangeFile);
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        setHistoryNotice(`片段准备失败：${getErrorMessage(error)}`);
+      } finally {
+        if (rangePreparationRef.current === controller) rangePreparationRef.current = null;
+        setIsPreparingRange(false);
+      }
+    },
+    [analyzeFile, state.originalFile],
+  );
+
+  const retry = () => {
+    if (state.originalFile) void analyzeFile(state.originalFile);
+  };
+
+  const updateAnalysis = useCallback((sourceIdentity: string, analysis: AnalysisResult) => {
+    const historyItemId = currentHistoryItemIdRef.current;
+    if (historyItemId !== sourceIdentity) return;
+    setAnalysisHistory(updateAnalysisHistoryItem(historyItemId, analysis));
+    dispatch({ type: 'update-analysis', analysis });
+  }, []);
+
+  const currentReportIdentity = state.analysis
+    ? (analysisHistory.find((item) => item.analysis === state.analysis)?.id ??
+      `${state.fileName}-${state.processingSummary}-${state.analysis.type}`)
+    : 'idle';
+
+  const pageDescription = useMemo(() => {
+    if (state.mode === 'music') {
+      return '导入音频或视频，识别曲风、段落、节奏与画面卡点；视频会在本地提取音轨。';
+    }
+    if (state.mode === 'sfx') {
+      return '导入音频或视频，拆解声学特征、UCS 分类、拟音方法与音画同步策略。';
+    }
+    return '诊断镜头结构、节奏、画面完成度与包装表达，给出带时间码的剪辑优化建议。';
+  }, [state.mode]);
 
   return (
-    <div className="min-h-screen font-sans selection:bg-[var(--color-accent)]/30 relative z-0">
-      <div className="atmosphere"></div>
-      
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+    <div className="min-h-dvh">
+      <a href="#main-content" className="skip-link">
+        跳到主要内容
+      </a>
+      {isSettingsOpen && <SettingsModal isOpen onClose={() => setIsSettingsOpen(false)} />}
+      <AppHeader
+        canReset={canReset}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onReset={reset}
+      />
 
-      {/* Header */}
-      <header className="border-b border-white/10 bg-black/20 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[var(--color-accent)] rounded-lg flex items-center justify-center shadow-lg shadow-[var(--color-accent)]/20">
-              <Activity className="text-white w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight">SonicLens <span className="text-xs font-normal text-[var(--color-accent)] bg-[var(--color-accent)]/10 px-1.5 py-0.5 rounded border border-[var(--color-accent)]/20">Gemini 3.5 Flash</span></h1>
-              <p className="text-xs text-slate-400">AI 声音监管助手</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-4">
-             {status === AnalysisState.COMPLETE && analysis && activeFileName && (
-               <ExportMenu analysis={analysis} fileName={activeFileName} contentRef={resultsRef} />
-             )}
-
-             <a
-                href={IMAGINE_WORKBENCH_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="欢迎使用我做的图片/视频生成平台"
-              >
-                <Sparkles size={16} className="text-[var(--color-accent)]" />
-                <span className="hidden md:inline">图片/视频生成</span>
-                <ExternalLink size={13} className="hidden sm:block text-slate-500" />
-              </a>
-             
-             <button 
-                onClick={() => setIsSettingsOpen(true)}
-                className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-                title="设置"
-              >
-                <Settings size={20} />
-              </button>
-
-             <button 
-                onClick={handleReset}
-                className="text-sm font-medium text-slate-400 hover:text-white transition-colors flex items-center gap-2"
-              >
-                <RotateCcwIcon size={16} /> <span className="hidden sm:inline">新分析</span>
-             </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        
-        {/* API Key Check */}
-        {!hasGeminiApiKey() && (
-           <div className="bg-red-500/10 border border-red-500 text-red-400 p-4 rounded-xl mb-8 flex items-center gap-3">
-             <AlertTriangle />
-             <p>
-               API Key 未配置。请在设置中填写，或
-               <a
-                 href={API_KEY_REGISTER_URL}
-                 target="_blank"
-                 rel="noopener noreferrer"
-                 className="inline-flex items-center gap-1 mx-1 text-white underline underline-offset-4 hover:text-red-200"
-               >
-                 使用邀请码注册 12AI
-                 <ExternalLink size={13} />
-               </a>
-               后填入。
-             </p>
-           </div>
-        )}
-
-        {/* State: IDLE / UPLOAD */}
-        {status === AnalysisState.IDLE && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }} 
-            animate={{ opacity: 1, scale: 1 }} 
-            transition={{ duration: 0.5 }}
-            className="max-w-2xl mx-auto mt-12"
-          >
-            <div className="text-center mb-8">
-              <h2 className="text-4xl font-extrabold mb-4 text-white">
-                听见每一个细节。
-              </h2>
-              <p className="text-lg text-slate-400">
-                请选择分析模式，AI 将为您分析曲风、乐器、节奏、曲调及节拍。
-              </p>
-            </div>
-
-            {/* Mode Selector */}
-            <div className="flex justify-center mb-8">
-              <div className="glass-panel p-1.5 flex">
-                <button 
-                  onClick={() => setAnalysisMode('music')}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all ${analysisMode === 'music' ? 'bg-[var(--color-accent)] text-white shadow-lg shadow-[var(--color-accent)]/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                >
-                  <Music size={18} /> 音乐分析 (Music)
-                </button>
-                <button 
-                  onClick={() => setAnalysisMode('sfx')}
-                  className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all ${analysisMode === 'sfx' ? 'bg-[#00f0ff] text-black shadow-lg shadow-[#00f0ff]/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                >
-                  <Volume2 size={18} /> 音效分析 (SFX)
-                </button>
+      <main id="main-content" className="app-shell">
+        {state.status === AnalysisState.IDLE && (
+          <div className="fade-up py-10 sm:py-14 lg:py-16">
+            <section className="mb-10 grid gap-7 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
+              <div>
+                <h1 className="max-w-3xl text-[2.25rem] font-semibold leading-[1.04] tracking-[-0.05em] text-balance sm:text-5xl lg:text-[3.5rem]">
+                  让视听成为
+                  <br />
+                  可剪辑的结构。
+                </h1>
               </div>
-            </div>
-
-            <FileUpload onFileSelect={handleFileSelect} disabled={false} mode={analysisMode} />
-
-            <div className="glass-panel p-5 mt-8">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <History size={16} className="text-[var(--color-accent)]" />
-                    历史分析
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-1">{historyNotice}</p>
-                </div>
-                <span className="text-xs font-mono text-slate-500 bg-white/5 px-2 py-1 rounded-md">
-                  {analysisHistory.length}/{ANALYSIS_HISTORY_LIMIT}
-                </span>
-              </div>
-
-              {analysisHistory.length > 0 ? (
-                <div className="space-y-4 max-h-72 overflow-y-auto pr-1">
-                  {groupedAnalysisHistory.map((group) => (
-                    <section key={group.dateKey} className="space-y-2">
-                      <div className="flex items-center justify-between gap-3 px-1">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                          {group.label}
-                        </h4>
-                        <span className="text-[11px] font-mono text-slate-600">
-                          {group.items.length} 条
-                        </span>
-                      </div>
-                      {group.items.map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => handleRestoreHistory(item)}
-                          className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/5 hover:border-[var(--color-accent)]/40 rounded-xl p-3 transition-colors"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-100 truncate">{item.fileName}</span>
-                                <span className="text-[10px] uppercase text-slate-300 bg-black/30 border border-white/10 px-1.5 py-0.5 rounded">
-                                  {item.analysisMode}
-                                </span>
-                              </div>
-                              <div className="text-xs text-slate-500 mt-1">
-                                {getHistoryTitle(item)} · {formatBytes(item.fileSize)} · {formatHistoryTime(item.createdAt)}
-                              </div>
-                            </div>
-                            <ExternalLink size={14} className="text-slate-500 flex-shrink-0" />
-                          </div>
-                        </button>
-                      ))}
-                    </section>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-500 bg-black/20 rounded-xl px-4 py-3">
-                  完成一次分析后，会自动缓存到这里。
+              <div className="lg:pb-1">
+                <p className="max-w-md text-sm leading-6 text-[var(--text-muted)] text-pretty">
+                  {pageDescription}
                 </p>
-              )}
-            </div>
-          </motion.div>
-        )}
+                <div className="mt-5">
+                  <ModeSelector
+                    mode={state.mode}
+                    onChange={(mode) => dispatch({ type: 'set-mode', mode })}
+                  />
+                </div>
+              </div>
+            </section>
 
-        {/* State: CONVERTING */}
-        {status === AnalysisState.CONVERTING && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            className="max-w-2xl mx-auto mt-20 text-center"
-          >
-            <div className="inline-block relative mb-8">
-              <div className={`w-32 h-32 rounded-full border-4 border-white/20 border-t-white animate-pulse`}></div>
-               <div className="absolute inset-0 flex items-center justify-center">
-                 <Loader2 className={`w-10 h-10 text-white animate-spin`} />
-               </div>
+            {!hasApiKey && (
+              <section
+                className="mb-5 flex flex-col justify-between gap-3 border-y hairline py-3 sm:flex-row sm:items-center"
+                aria-labelledby="api-key-required"
+              >
+                <div className="flex items-center gap-3">
+                  <KeyRound size={15} className="shrink-0 accent-text" />
+                  <div>
+                    <h2 id="api-key-required" className="text-[0.8rem] font-semibold">
+                      连接你自己的模型 API
+                    </h2>
+                    <p className="mt-0.5 text-[0.68rem] leading-5 text-[var(--text-muted)]">
+                      凭证仅保存在当前浏览器
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="accent-bg inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-bold"
+                >
+                  配置 API
+                  <ArrowRight size={14} />
+                </button>
+              </section>
+            )}
+
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1.55fr)_minmax(17rem,0.45fr)]">
+              <FileUpload
+                onFileSelect={(file) => void analyzeFile(file)}
+                disabled={!hasApiKey}
+                mode={state.mode}
+              />
+              <HistoryPanel
+                items={analysisHistory}
+                onRestore={(item) => void restoreHistory(item)}
+                onDelete={(id) => void deleteHistory(id)}
+                onClear={() => void clearHistory()}
+                onToggleFavorite={toggleFavorite}
+              />
             </div>
-            <h3 className="text-2xl font-semibold mb-2">
-              {processingTitle || '正在准备分析音频'}
-            </h3>
-            <p className="text-slate-400">
-              上传前会在浏览器本地提取并压缩音频，控制发送给模型的文件大小。
-            </p>
-            {processingDetail && (
-              <p className="text-sm text-slate-500 mt-3 max-w-md mx-auto leading-relaxed">
-                {processingDetail}
+
+            {historyNotice && (
+              <p role="status" className="mt-4 text-right text-[0.68rem] accent-text">
+                {historyNotice}
               </p>
             )}
-          </motion.div>
+          </div>
         )}
 
-        {/* State: ANALYZING */}
-        {status === AnalysisState.ANALYZING && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            className="max-w-2xl mx-auto mt-20 text-center"
-          >
-            <div className="inline-block relative mb-8">
-              <div className={`w-32 h-32 rounded-full border-4 ${analysisMode === 'music' ? 'border-[var(--color-accent)]/20 border-t-[var(--color-accent)]' : 'border-[#00f0ff]/20 border-t-[#00f0ff]'} animate-spin`}></div>
-               <div className="absolute inset-0 flex items-center justify-center">
-                 <Sparkles className={`w-10 h-10 ${analysisMode === 'music' ? 'text-[var(--color-accent)]' : 'text-[#00f0ff]'} animate-pulse`} />
-               </div>
-            </div>
-            <h3 className="text-2xl font-semibold mb-2">
-              {processingTitle || `正在分析 ${analysisMode === 'music' ? '音乐' : '音效'}...`}
-            </h3>
-            <p className="text-slate-400">
-              {processingDetail || (analysisMode === 'music' 
-                ? '正在深入分析波形、流派、分段节奏及乐器构成...' 
-                : '识别 UCS 分类、Foley 拟音方案及材质分析。')}
-            </p>
-            {processingSummary && (
-              <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-300">
-                <Info size={14} />
-                <span>{processingSummary}</span>
+        {isProcessing && state.fileName && (
+          <ProcessingView
+            title={state.processingTitle}
+            detail={state.processingDetail}
+            fileName={state.fileName}
+            mode={state.mode}
+            onCancel={reset}
+            stage={state.processingStage}
+          />
+        )}
+
+        {state.status === AnalysisState.ERROR && (
+          <section className="mx-auto max-w-2xl py-16 sm:py-24" role="alert">
+            <div className="surface p-7 sm:p-10">
+              <span className="grid h-11 w-11 place-items-center rounded-xl bg-[rgba(217,137,118,0.1)] text-[var(--danger)]">
+                <AlertTriangle size={20} />
+              </span>
+              <p className="eyebrow mt-7 text-[var(--danger)]">Analysis stopped</p>
+              <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em]">这次分析没有完成</h1>
+              <p className="mt-4 text-sm leading-6 text-[var(--text-muted)]">{state.error}</p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                {state.originalFile && (
+                  <button
+                    type="button"
+                    onClick={retry}
+                    className="accent-bg inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-bold"
+                  >
+                    <RotateCcw size={14} />
+                    重试
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="rounded-lg border hairline px-4 py-2.5 text-xs font-semibold text-[var(--text-muted)] hover:border-[var(--line-strong)] hover:text-[var(--text)]"
+                >
+                  返回工作台
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="px-3 py-2.5 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
+                >
+                  检查 API 设置
+                </button>
               </div>
-            )}
-            {file && (
-                <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 glass-panel text-sm text-slate-400">
-                    <FileAudio size={14} />
-                    <span className="truncate max-w-[200px]">{activeFileName || file.name}</span>
-                </div>
-            )}
-          </motion.div>
+            </div>
+          </section>
         )}
 
-        {/* State: ERROR */}
-        {status === AnalysisState.ERROR && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            className="max-w-2xl mx-auto mt-12 text-center"
-          >
-             <div className="bg-red-500/10 border border-red-500/50 p-8 rounded-3xl">
-               <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-               <h3 className="text-xl font-bold text-red-400">分析失败</h3>
-               <p className="text-slate-400 mt-2 mb-6">{errorMsg}</p>
-               <button 
-                  onClick={handleReset}
-                  className="glass-panel hover:bg-white/10 text-white px-8 py-3 rounded-full font-medium transition-colors shadow-lg"
-               >
-                 重试
-               </button>
-             </div>
-          </motion.div>
-        )}
-
-        {/* State: COMPLETE */}
-        {status === AnalysisState.COMPLETE && analysis && (
-          <motion.div 
-            initial={{ opacity: 0, y: 40 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            transition={{ duration: 0.7 }}
-            ref={resultsRef}
-          >
-            <div className="glass-panel p-4 mb-6 flex items-center gap-3 text-sm text-slate-300">
-              <Info size={16} className="text-[var(--color-accent)] flex-shrink-0" />
-              <span>{historyNotice}</span>
-            </div>
-            
-            {/* Top Bar: Player & Primary Info */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-              {/* Left: Player & Basic Meta */}
-              <div className="lg:col-span-2 glass-panel p-8 relative overflow-hidden">
-                <div className={`absolute top-0 right-0 w-80 h-80 ${analysis.type === 'music' ? 'bg-[var(--color-accent)]/10' : 'bg-[#00f0ff]/10'} blur-[100px] rounded-full pointer-events-none`}></div>
-                
-                <div className="flex flex-col md:flex-row items-start justify-between mb-8 gap-4">
-                   <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        {analysis.type === 'music' ? (
-                            <>
-                                <span className="bg-[var(--color-accent)] text-white text-xs font-bold px-3 py-1 rounded-md uppercase tracking-wider shadow-lg shadow-[var(--color-accent)]/30">
-                                {analysis.mainGenre || "Music"}
-                                </span>
-                                {analysis.subGenres?.map(sub => (
-                                <span key={sub} className="glass-panel text-slate-300 text-xs font-medium px-2 py-1 rounded">
-                                    {sub}
-                                </span>
-                                ))}
-                            </>
-                        ) : (
-                            <span className="bg-[#00f0ff] text-black text-xs font-bold px-3 py-1 rounded-md uppercase tracking-wider shadow-lg shadow-[#00f0ff]/30 flex items-center gap-1">
-                                <Sparkles size={12} /> Sound Effect (SFX)
-                            </span>
-                        )}
-                      </div>
-                      
-                      {/* SFX Specific Heading */}
-                      {analysis.type === 'sfx' && analysis.sfx ? (
-                          <>
-                            <h2 className="text-3xl font-bold text-white mb-2">{analysis.sfx.name}</h2>
-                            <div className="flex items-center gap-2 text-[#00f0ff] font-mono text-sm bg-[#00f0ff]/10 px-3 py-1.5 rounded-lg border border-[#00f0ff]/20 w-fit">
-                                <Tag size={14} />
-                                <span>UCS: {analysis.sfx.ucsCatId} / {analysis.sfx.ucsCategory} / {analysis.sfx.ucsSubCategory}</span>
-                            </div>
-                          </>
-                      ) : (
-                          <h2 className="text-3xl font-bold text-white mb-1">音乐分析报告</h2>
-                      )}
-
-                      <p className="text-slate-400 text-sm font-mono truncate max-w-md mt-2">{activeFileName}</p>
-                      {processingSummary && (
-                        <p className="text-xs text-emerald-300 mt-2">{processingSummary}</p>
-                      )}
-                   </div>
-                </div>
-
-                {/* Waveform Player */}
-                {file && (
-                    <div className="mb-8" data-html2canvas-ignore="true">
-                        <WaveformPlayer ref={playerRef} file={file} autoPlay={false} />
-                    </div>
-                )}
-                {!file && activeFileName && (
-                    <div className="mb-8 glass-panel p-4 text-sm text-slate-400 flex items-center gap-2" data-html2canvas-ignore="true">
-                        <Info size={15} className="text-[var(--color-accent)] flex-shrink-0" />
-                        <span>这是历史缓存结果，仅保存分析报告和文件信息；如需波形播放，请重新上传原音频。</span>
-                    </div>
-                )}
-
-                {/* Conditional Stats */}
-                {analysis.type === 'music' ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <StatCard icon={<Activity size={18} />} label="AVG BPM" value={analysis.bpm || '-'} />
-                        <StatCard icon={<Clock size={18} />} label="拍号" value={analysis.timeSignature || '-'} />
-                        <StatCard icon={<Music size={18} />} label="主调式" value={analysis.key || '-'} />
-                        <StatCard icon={<Disc size={18} />} label="律动" value={analysis.rhythmDescription || '-'} isLongText />
-                    </div>
-                ) : (
-                    <div className="glass-panel p-4">
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
-                             <Mic2 size={14} /> 声音来源 / 描述
-                        </h4>
-                        <p className="text-slate-200 text-sm leading-relaxed">{analysis.educationalContext}</p>
-                    </div>
-                )}
-                
-                {analysis.type === 'music' && (
-                    <div className="mt-8">
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                            <Mic2 size={14} /> 包含的所有乐器
-                        </h4>
-                        <div className="flex flex-wrap gap-2">
-                            {analysis.instruments?.map(inst => (
-                            <div key={inst} className="flex items-center gap-2 glass-panel px-3 py-1.5 rounded-full text-sm text-slate-300">
-                                {inst}
-                            </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-              </div>
-
-              {/* Right: Visualization & Mood (Only for Music) */}
-              {analysis.type === 'music' && analysis.sonicProfile && (
-                <div className="glass-panel p-6 flex flex-col">
-                    <AnalysisVisualizer profile={analysis.sonicProfile} />
-                    
-                    <div className="mt-6">
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">情绪基调</h4>
-                        <div className="flex flex-wrap gap-2">
-                            {analysis.mood?.map((m, idx) => (
-                            <span key={idx} className="text-sm font-medium text-white bg-gradient-to-r from-[var(--color-accent)] to-orange-500 px-3 py-1 rounded-md shadow-sm">
-                                #{m}
-                            </span>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className="mt-8 border-t border-white/10 pt-6">
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">风格科普</h4>
-                        <p className="text-sm text-slate-400 leading-relaxed">
-                            {analysis.educationalContext}
-                        </p>
-                    </div>
-                </div>
-              )}
-
-              {/* Right: Foley & Tips (Only for SFX) */}
-              {analysis.type === 'sfx' && analysis.sfx && (
-                <div className="glass-panel p-6 flex flex-col gap-6">
-                     <div>
-                        <h4 className="text-xs font-bold text-[#00f0ff] uppercase tracking-wider mb-3 flex items-center gap-2">
-                             <Hammer size={16} /> Foley 拟音指南
-                        </h4>
-                        <div className="bg-black/20 p-4 rounded-xl text-sm text-slate-200 leading-relaxed border-l-4 border-[#00f0ff]">
-                             {analysis.sfx.foleyInstructions}
-                        </div>
-                     </div>
-                     
-                     <div>
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-                             生活中的替代音源
-                        </h4>
-                        <p className="text-sm text-slate-300">{analysis.sfx.accessibleAlternatives}</p>
-                     </div>
-                </div>
-              )}
-            </div>
-
-            {/* Video Editor Cue Points (New - Gemini 3.5 Feature) */}
-            {analysis.type === 'music' && analysis.editorCuePoints && analysis.editorCuePoints.length > 0 && (
-                <div className="glass-panel p-8 mb-8 relative border border-white/5 overflow-hidden">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-slate-500/5 blur-[80px] rounded-full pointer-events-none"></div>
-                  <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                    <Sparkles className="text-[var(--color-accent)] animate-pulse" size={20} /> 
-                    影视剪辑画面卡点卡槽指南 (点击跳转卡点)
-                  </h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                     {analysis.editorCuePoints.map((cue, idx) => (
-                       <button
-                         key={idx}
-                         onClick={() => handleJumpToSegment(cue.timestamp)}
-                         className="text-left bg-white/5 border border-white/5 hover:border-[var(--color-accent)]/30 p-4 rounded-xl transition-all hover:bg-white/10 flex gap-4 group"
-                       >
-                         {/* Timing Badge */}
-                         <div className="flex-shrink-0">
-                           <span className="font-mono text-sm bg-[var(--color-accent)]/10 text-[var(--color-accent)] px-2 py-1 rounded border border-[var(--color-accent)]/20 font-bold group-hover:bg-[var(--color-accent)] group-hover:text-white transition-all">
-                             {cue.timestamp}
-                           </span>
-                         </div>
-                         {/* Content */}
-                         <div className="flex-1 min-w-0">
-                           <div className="flex items-center gap-2 mb-1">
-                             <span className="font-semibold text-slate-100 truncate text-[15px]">{cue.eventName}</span>
-                           </div>
-                           <p className="text-xs text-slate-400 mb-2 truncate" title={cue.vibeChange}>
-                             听感: {cue.vibeChange}
-                           </p>
-                           <p className="text-[13px] text-slate-300 font-medium leading-relaxed bg-black/20 p-2.5 rounded border border-white/5">
-                             {cue.visualAdvice}
-                           </p>
-                         </div>
-                       </button>
-                     ))}
-                  </div>
-                </div>
+        {state.status === AnalysisState.COMPLETE && state.analysis && state.fileName && (
+          <div className="pt-5 sm:pt-6">
+            {historyNotice && (
+              <p role="status" className="mb-4 text-right text-[0.68rem] accent-text">
+                {historyNotice}
+              </p>
             )}
-
-            {/* Timeline / Segments Section (New - Enhanced) */}
-            {analysis.type === 'music' && analysis.segments && analysis.segments.length > 0 && (
-                <div className="glass-panel p-8 mb-8">
-                  <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                    <Layers className="text-[var(--color-accent)]" /> 
-                    时间轴详情 (点击时间跳转)
-                  </h3>
-                  <div className="space-y-4">
-                    {analysis.segments.map((seg, i) => (
-                      <button 
-                        key={i} 
-                        onClick={() => handleJumpToSegment(seg.timestamp)}
-                        className="w-full text-left glass-panel p-5 flex flex-col lg:flex-row gap-5 items-start hover:bg-white/10 transition-all group relative overflow-hidden"
-                      >
-                         {/* Hover Highlight */}
-                        <div className="absolute inset-0 bg-[var(--color-accent)]/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-
-                        {/* Timestamp & Play Icon */}
-                        <div className="flex-shrink-0 flex flex-col items-center gap-2 min-w-[100px]">
-                            <div className="bg-black/40 text-[var(--color-accent)] font-mono text-sm px-3 py-1.5 rounded-lg border border-[var(--color-accent)]/20 whitespace-nowrap shadow-sm font-bold flex items-center gap-2">
-                                {seg.timestamp}
-                            </div>
-                            <div className="text-[var(--color-accent)] opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0 text-xs font-medium flex items-center gap-1">
-                                <PlayCircle size={14} /> 点击播放
-                            </div>
-                        </div>
-
-                        <div className="flex-1 w-full">
-                            {/* Header: Genre & Mood */}
-                            <div className="flex flex-wrap items-center gap-3 mb-3">
-                              <span className="font-bold text-slate-100 text-lg">{seg.genre}</span>
-                              <span className="text-xs text-orange-200 bg-[var(--color-accent)]/20 px-2 py-0.5 rounded border border-[var(--color-accent)]/20">
-                                {seg.mood}
-                              </span>
-                            </div>
-
-                            {/* Detailed Stats Grid (BPM/Key/Instruments) */}
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
-                                {seg.bpm && (
-                                    <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-black/20 px-2 py-1 rounded">
-                                        <Activity size={12} className="text-[var(--color-accent)]"/> 
-                                        <span>BPM: <span className="text-slate-200 font-mono">{seg.bpm}</span></span>
-                                    </div>
-                                )}
-                                {seg.key && (
-                                    <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-black/20 px-2 py-1 rounded">
-                                        <Music size={12} className="text-[var(--color-accent)]"/> 
-                                        <span>Key: <span className="text-slate-200 font-mono">{seg.key}</span></span>
-                                    </div>
-                                )}
-                            </div>
-                            
-                             {/* Segment Instruments */}
-                             {seg.instruments && seg.instruments.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5 mb-3">
-                                    {seg.instruments.map((inst, idx) => (
-                                        <span key={idx} className="text-[10px] uppercase font-bold text-slate-500 bg-black/40 border border-white/10 px-2 py-0.5 rounded">
-                                            {inst}
-                                        </span>
-                                    ))}
-                                </div>
-                             )}
-
-                            <p className="text-slate-300 text-sm leading-relaxed">{seg.description}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+            <Suspense
+              fallback={
+                <div className="surface min-h-72 animate-pulse p-8" aria-label="正在载入报告">
+                  <div className="h-3 w-32 rounded bg-black/[0.06]" />
+                  <div className="mt-8 h-12 max-w-xl rounded bg-black/[0.06]" />
+                  <div className="mt-12 h-24 rounded-xl bg-black/[0.035]" />
                 </div>
-            )}
-
-            {/* Prompt Generator Section */}
-            {analysis.optimizedPrompt && (
-                <PromptGenerator prompt={analysis.optimizedPrompt} type={analysis.type} />
-            )}
-
-            {/* Similar Tracks */}
-            {analysis.similarTracks && analysis.similarTracks.length > 0 && (
-                <div className="glass-panel p-8 mt-8">
-                    <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                        <ListMusic className="text-[var(--color-accent)]" /> 
-                        相似曲目
-                    </h3>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {analysis.similarTracks.map((track, i) => (
-                            <div key={i} className="glass-panel p-5 flex flex-col gap-3 group hover:border-[var(--color-accent)]/50 transition-colors">
-                                <div className="flex items-start justify-between">
-                                  <div>
-                                      <div className="font-bold text-white text-lg group-hover:text-[var(--color-accent)] transition-colors">{track.title}</div>
-                                      <div className="text-sm text-slate-400">{track.artist}</div>
-                                  </div>
-                                  <Disc className="text-slate-600 group-hover:text-[var(--color-accent)] transition-colors opacity-50 group-hover:opacity-100" />
-                                </div>
-                                {/* Per-track reference links */}
-                                <div className="border-t border-white/10 pt-2">
-                                  <ReferenceTrackLinks track={track} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Stock Links */}
-            <div className="glass-panel p-8 mt-8">
-                <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                    <Search className={analysis.type === 'music' ? 'text-[var(--color-accent)]' : 'text-[#00f0ff]'} /> 
-                    素材库搜索资源
-                </h3>
-                <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4">
-                    基于整体分析的素材库搜索
-                </h4>
-                <StockLinks keywords={analysis.keywords} genre={analysis.mainGenre} type={analysis.type} />
-            </div>
-          </motion.div>
+              }
+            >
+              <AnalysisReport
+                key={currentReportIdentity}
+                analysis={state.analysis}
+                contentRef={reportRef}
+                file={state.originalFile}
+                fileName={state.fileName}
+                isPreparingRange={isPreparingRange}
+                onAnalyzeRange={analyzeRange}
+                onAnalysisChange={updateAnalysis}
+                processingSummary={state.processingSummary}
+                reportIdentity={currentReportIdentity}
+              />
+            </Suspense>
+          </div>
         )}
       </main>
     </div>
   );
 }
-
-export default App;

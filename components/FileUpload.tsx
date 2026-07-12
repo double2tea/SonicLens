@@ -1,81 +1,177 @@
-import React, { useCallback } from 'react';
-import { Upload, FileAudio, Music, Volume2 } from 'lucide-react';
+import React, { useCallback, useId, useRef, useState } from 'react';
+import { FileAudio, FileVideo, Upload } from 'lucide-react';
+import type { AnalysisMode } from '../types';
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
   disabled: boolean;
-  mode: 'music' | 'sfx';
+  mode: AnalysisMode;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, mode }) => {
-  const isMusic = mode === 'music';
-  
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    if (disabled) return;
-    const file = e.dataTransfer.files[0];
-    // Allow audio and mp4 video
-    if (file && (file.type.startsWith('audio/') || file.type === 'video/mp4')) {
-      onFileSelect(file);
-    }
-  }, [onFileSelect, disabled]);
+const isSupportedFile = (file: File, mode: AnalysisMode): boolean =>
+  mode === 'video'
+    ? file.type === 'video/mp4'
+    : file.type.startsWith('audio/') || file.type === 'video/mp4';
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (disabled) return;
-    const file = e.target.files?.[0];
-    if (file) {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, mode }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dragDepthRef = useRef(0);
+  const descriptionId = useId();
+  const errorId = useId();
+  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<{ message: string; mode: AnalysisMode } | null>(null);
+  const isMusic = mode === 'music';
+  const isVideo = mode === 'video';
+  const errorMessage = error?.mode === mode ? error.message : null;
+
+  const selectFile = useCallback(
+    (file: File | undefined) => {
+      if (!file || disabled) return;
+
+      if (!isSupportedFile(file, mode)) {
+        setError({
+          message: isVideo
+            ? '视频分析仅支持 MP4 文件。'
+            : `请选择音频或 MP4 视频，视频会自动提取音轨进行${isMusic ? '音乐' : '音效'}分析。`,
+          mode,
+        });
+        return;
+      }
+
+      setError(null);
       onFileSelect(file);
-    }
+    },
+    [disabled, isMusic, isVideo, mode, onFileSelect],
+  );
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    selectFile(event.target.files?.[0]);
+    event.target.value = '';
   };
 
+  const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (disabled) return;
+    dragDepthRef.current += 1;
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (disabled) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragging(false);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setIsDragging(false);
+    selectFile(event.dataTransfer.files[0]);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    inputRef.current?.click();
+  };
+
+  const openFilePicker = () => {
+    if (!disabled) inputRef.current?.click();
+  };
+
+  const accentText = 'text-[var(--accent)]';
+  const accentBorder = 'accent-border';
+
   return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add(isMusic ? 'border-[var(--color-accent)]' : 'border-[#00f0ff]', 'bg-white/5'); }}
-      onDragLeave={(e) => { e.preventDefault(); e.currentTarget.classList.remove(isMusic ? 'border-[var(--color-accent)]' : 'border-[#00f0ff]', 'bg-white/5'); }}
-      onDrop={(e) => { 
-        handleDrop(e); 
-        e.currentTarget.classList.remove(isMusic ? 'border-[var(--color-accent)]' : 'border-[#00f0ff]', 'bg-white/5'); 
-      }}
-      className={`
-        border-2 border-dashed rounded-3xl p-16 text-center transition-all duration-300
-        flex flex-col items-center justify-center gap-6 group cursor-pointer relative overflow-hidden glass-panel
-        ${disabled ? 'border-white/10 opacity-50 cursor-not-allowed' : `border-white/20 hover:bg-white/5 ${isMusic ? 'hover:border-[var(--color-accent)]' : 'hover:border-[#00f0ff]'}`}
-      `}
-    >
+    <>
       <input
+        ref={inputRef}
         type="file"
-        id="fileInput"
-        accept="audio/*,video/mp4"
-        className="hidden"
+        accept={isVideo ? 'video/mp4' : 'audio/*,video/mp4'}
+        aria-label={isVideo ? '选择 MP4 视频' : `选择${isMusic ? '音乐' : '音效'}或 MP4 视频`}
+        className="sr-only"
         onChange={handleChange}
         disabled={disabled}
+        tabIndex={-1}
       />
-      
-      <div className={`absolute inset-0 bg-gradient-to-br ${isMusic ? 'from-[var(--color-accent)]/5 to-orange-500/5' : 'from-[#00f0ff]/5 to-blue-500/5'} pointer-events-none`} />
 
-      <label htmlFor="fileInput" className="cursor-pointer w-full h-full flex flex-col items-center justify-center z-10">
-        <div className="bg-black/40 p-6 rounded-full mb-4 shadow-xl shadow-black/20 group-hover:scale-110 transition-all duration-300">
-          <Upload className={`w-10 h-10 ${isMusic ? 'text-[var(--color-accent)]' : 'text-[#00f0ff]'}`} />
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
+        aria-describedby={`${descriptionId}${errorMessage ? ` ${errorId}` : ''}`}
+        onClick={openFilePicker}
+        onKeyDown={handleKeyDown}
+        onDragEnter={handleDragEnter}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`group relative flex min-h-[310px] min-w-0 w-full flex-col items-center justify-center overflow-hidden rounded-lg border p-7 text-center outline-none transition-[border-color,background-color,opacity] duration-300 sm:min-h-[350px] sm:p-10 focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-4 focus-visible:ring-offset-[var(--canvas)] ${
+          disabled
+            ? 'cursor-not-allowed border-black/8 bg-black/[0.012] opacity-55'
+            : `cursor-pointer bg-white/35 hover:bg-white/60 ${
+                isDragging
+                  ? `${accentBorder} scale-[0.995]`
+                  : 'border-black/10 hover:border-black/25'
+              }`
+        } ${errorMessage ? 'border-red-400/40' : ''}`}
+      >
+        <div className="relative z-10 flex max-w-lg flex-col items-center">
+          <div
+            className={`mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-black/[0.045] transition-transform duration-300 group-hover:-translate-y-0.5 ${
+              isDragging ? 'accent-surface' : ''
+            }`}
+          >
+            {isDragging ? (
+              isVideo ? (
+                <FileVideo
+                  aria-hidden="true"
+                  className={`h-5 w-5 ${accentText}`}
+                  strokeWidth={1.7}
+                />
+              ) : (
+                <FileAudio
+                  aria-hidden="true"
+                  className={`h-5 w-5 ${accentText}`}
+                  strokeWidth={1.7}
+                />
+              )
+            ) : (
+              <Upload aria-hidden="true" className={`h-5 w-5 ${accentText}`} strokeWidth={1.7} />
+            )}
+          </div>
+
+          <h3 className="text-balance text-xl font-semibold tracking-[-0.025em] text-[var(--text)] sm:text-2xl">
+            {isDragging
+              ? `松开即可载入${isVideo ? '视频' : '媒体'}`
+              : `拖入${isVideo ? '视频' : isMusic ? '音乐或视频' : '音效或视频'}，或点击选择`}
+          </h3>
+          <p
+            id={descriptionId}
+            className="mt-3 max-w-md text-xs leading-5 text-[var(--text-muted)] sm:text-sm"
+          >
+            {isVideo
+              ? 'MP4 · 联合识别分镜、画面与声音'
+              : 'MP3、WAV、AAC、MP4 · 视频仅在本地提取音轨'}
+          </p>
+
+          <div aria-live="polite" className="min-h-6 pt-3">
+            {errorMessage && (
+              <p id={errorId} role="alert" className="text-sm font-medium text-red-300">
+                {errorMessage}
+              </p>
+            )}
+          </div>
         </div>
-        <h3 className="text-2xl font-bold text-white mb-2">
-           {isMusic ? '拖入音乐 (Music)' : '拖入音效 (SFX)'} 或点击上传
-        </h3>
-        <p className="text-slate-400 max-w-sm leading-relaxed">
-          支持 MP3, WAV, AAC 以及 MP4 视频；视频会先本地提取音频。
-          <br/><span className="text-xs text-slate-500 font-bold bg-black/40 px-2 py-1 rounded mt-2 inline-block">上传前自动压缩分析音频，默认目标 12MB</span>
-        </p>
-        
-        <div className="flex gap-6 mt-8">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-400 bg-black/40 border border-white/10 px-4 py-2 rounded-full">
-                {isMusic ? (
-                    <><Music size={16} className="text-[var(--color-accent)]" /> 音乐模式</>
-                ) : (
-                    <><Volume2 size={16} className="text-[#00f0ff]" /> 音效模式</>
-                )}
-            </div>
-        </div>
-      </label>
-    </div>
+      </div>
+    </>
   );
 };
 
