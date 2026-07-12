@@ -723,15 +723,11 @@ const toBase64 = (file: File, signal?: AbortSignal): Promise<string> =>
 
 const normalizeModelId = (model: string): string => model.trim().replace(/^models\//, '');
 
-const buildGenerateContentUrl = (baseUrl: string, model: string, apiKey: string): string => {
-  const url = new URL(`/v1beta/models/${normalizeModelId(model)}:generateContent`, baseUrl);
-  url.searchParams.set('key', apiKey);
-  return url.toString();
-};
+const buildGenerateContentUrl = (baseUrl: string, model: string): string =>
+  new URL(`/v1beta/models/${normalizeModelId(model)}:generateContent`, baseUrl).toString();
 
-const buildStreamGenerateContentUrl = (baseUrl: string, model: string, apiKey: string): string => {
+const buildStreamGenerateContentUrl = (baseUrl: string, model: string): string => {
   const url = new URL(`/v1beta/models/${normalizeModelId(model)}:streamGenerateContent`, baseUrl);
-  url.searchParams.set('key', apiKey);
   url.searchParams.set('alt', 'sse');
   return url.toString();
 };
@@ -839,6 +835,15 @@ const readErrorMessage = (payload: unknown, fallback: string): string => {
   return fallback;
 };
 
+const fetchGemini = async (url: string, init: RequestInit): Promise<Response> => {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (init.signal?.aborted) throw error;
+    throw new Error('模型服务连接被中断，请检查 Base URL 或网络后重试。', { cause: error });
+  }
+};
+
 interface GeminiContent {
   role: 'user' | 'model';
   parts: Array<GeminiTextPart | GeminiInlineDataPart>;
@@ -865,9 +870,9 @@ const requestJsonText = async ({
   temperature,
   maxOutputTokens,
 }: JsonRequestOptions): Promise<string> => {
-  const response = await fetch(buildGenerateContentUrl(config.baseUrl, config.model, apiKey), {
+  const response = await fetchGemini(buildGenerateContentUrl(config.baseUrl, config.model), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
@@ -1337,25 +1342,23 @@ export const streamAnalysisAgent = async (
     ],
   });
 
-  const response = await fetch(
-    buildStreamGenerateContentUrl(config.baseUrl, config.model, apiKey),
-    {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: buildAgentSystemInstruction(analysis) }] },
-        contents,
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 4096,
-        },
-      }),
-      signal,
+  const response = await fetchGemini(buildStreamGenerateContentUrl(config.baseUrl, config.model), {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
     },
-  );
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: buildAgentSystemInstruction(analysis) }] },
+      contents,
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+      },
+    }),
+    signal,
+  });
 
   if (!response.ok) {
     const errorText = await response.text();

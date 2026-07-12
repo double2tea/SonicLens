@@ -158,7 +158,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled, mode })
             className="mt-3 max-w-md text-xs leading-5 text-[var(--text-muted)] sm:text-sm"
           >
             {isVideo
-              ? 'MP4 · 联合识别分镜、画面与声音'
+              ? 'MP4 · 大文件自动生成分析代理 · 联合识别分镜、画面与声音'
               : 'MP3、WAV、AAC、MP4 · 视频仅在本地提取音轨'}
           </p>
 

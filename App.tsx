@@ -37,6 +37,7 @@ import { getGeminiRuntimeConfig, hasGeminiApiKey } from './services/geminiConfig
 import { analyzeMedia } from './services/geminiService';
 import { formatTimestamp } from './services/timecode';
 import { getFileSizeBucket, trackUsageEvent } from './services/usageAnalytics';
+import { prepareVideoForAnalysis } from './services/videoCompression';
 import { readVideoDuration } from './services/videoUtils';
 import { AnalysisState } from './types';
 import type { AnalysisMode, AnalysisResult } from './types';
@@ -244,10 +245,23 @@ export default function App() {
           dispatch({
             type: 'progress',
             title: '正在准备原始视频',
-            detail: '保留完整画面与声音，不提取或转存帧图。',
+            detail: '正在读取时长并检查是否需要生成轻量分析代理。',
           });
           videoDurationSeconds = await readVideoDuration(selectedFile, job.controller.signal);
-          summary = `原始视频 ${formatBytes(selectedFile.size)} · ${formatTimestamp(videoDurationSeconds)} · 视频诊断与剪辑分析`;
+          const preparedVideo = await prepareVideoForAnalysis(selectedFile, {
+            durationSeconds: videoDurationSeconds,
+            maxBytes: config.maxUploadMb * 1024 * 1024,
+            signal: job.controller.signal,
+            onProgress: ({ title, detail }) => {
+              if (currentJobId() === job.id) dispatch({ type: 'progress', title, detail });
+            },
+          });
+          analysisFile = preparedVideo.file;
+          processedBytes = preparedVideo.processedBytes;
+          wasTranscoded = preparedVideo.wasTranscoded;
+          summary = preparedVideo.wasTranscoded
+            ? `分析代理 ${formatBytes(preparedVideo.originalBytes)} → ${formatBytes(preparedVideo.processedBytes)} · ${preparedVideo.profile} · ${formatTimestamp(videoDurationSeconds)}`
+            : `原始视频 ${formatBytes(selectedFile.size)} · ${formatTimestamp(videoDurationSeconds)} · 视频诊断与剪辑分析`;
         } else {
           const targetUploadMb = Math.min(config.audioTargetUploadMb, config.maxUploadMb);
           const preparedAudio = await prepareAudioForAnalysis(selectedFile, {

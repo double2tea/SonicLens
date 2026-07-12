@@ -183,6 +183,9 @@ describe('analyzeMusicMedia', () => {
 
     expect(result).toEqual(sfxResult);
     expect(fetchMock).toHaveBeenCalledOnce();
+    const [requestUrl, requestInit] = fetchMock.mock.calls[0];
+    expect(String(requestUrl)).not.toContain('key=');
+    expect(new Headers(requestInit?.headers).get('x-goog-api-key')).toBe('test-key');
   });
 
   it('retries with the compact schema after a truncated response', async () => {
@@ -202,6 +205,15 @@ describe('analyzeMusicMedia', () => {
       analyzeMusicMedia(new File(['audio'], 'impact.mp3', { type: 'audio/mpeg' }), 'sfx'),
     ).resolves.toEqual(sfxResult);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a clear error when the model connection is reset', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      analyzeMusicMedia(new File(['audio'], 'impact.mp3', { type: 'audio/mpeg' }), 'sfx'),
+    ).rejects.toThrow('模型服务连接被中断，请检查 Base URL 或网络后重试');
   });
 
   it('sends the original MP4 and returns the video diagnosis before generation', async () => {
@@ -497,6 +509,8 @@ describe('analyzeMusicMedia', () => {
     expect(onDelta.mock.calls.flat()).toEqual(['先缩短开场，', '再检查转场。']);
     expect(String(fetchMock.mock.calls[0][0])).toContain(':streamGenerateContent');
     expect(String(fetchMock.mock.calls[0][0])).toContain('alt=sse');
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('key=');
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('x-goog-api-key')).toBe('test-key');
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as {
       contents: Array<{ role: string; parts: Array<{ inlineData?: unknown; text?: string }> }>;
       systemInstruction: { parts: Array<{ text: string }> };
