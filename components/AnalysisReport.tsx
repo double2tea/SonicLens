@@ -38,6 +38,8 @@ import type { WaveformPlayerRef } from './WaveformPlayer';
 
 interface AnalysisReportProps {
   analysis: AnalysisResult;
+  agentMediaFile: File | null;
+  agentMediaIsProxy: boolean;
   contentRef: RefObject<HTMLDivElement | null>;
   file: File | null;
   fileName: string;
@@ -285,6 +287,8 @@ type UtilityView = 'prompt' | 'references' | 'stock';
 
 export default function AnalysisReport({
   analysis,
+  agentMediaFile,
+  agentMediaIsProxy,
   contentRef,
   file,
   fileName,
@@ -322,6 +326,19 @@ export default function AnalysisReport({
   const videoReportAnalysis: VideoAnalysisResult | null = isVideo ? analysis : null;
   const reportAnalysis: AnalysisResult = videoReportAnalysis ?? analysis;
   const isShotSegmentation = videoReportAnalysis?.segmentation.mode === 'shot';
+  const highestVideoPriority = videoReportAnalysis
+    ? videoReportAnalysis.editReview.recommendations.length === 0
+      ? videoReportAnalysis.editReview.verdict?.status === 'ready'
+        ? '无需修改'
+        : '待复核'
+      : videoReportAnalysis.editReview.recommendations.some(({ priority }) => priority === 'high')
+        ? '高'
+        : videoReportAnalysis.editReview.recommendations.some(
+              ({ priority }) => priority === 'medium',
+            )
+          ? '中'
+          : '低'
+    : '';
 
   useEffect(() => {
     return () => seedAudioControllerRef.current?.abort();
@@ -436,10 +453,7 @@ export default function AnalysisReport({
                 label={isShotSegmentation ? '候选镜头' : '分析段落'}
                 value={String(analysis.shots.length)}
               />
-              <Metric
-                label="高优先动作"
-                value={`${analysis.editReview.recommendations.filter(({ priority }) => priority === 'high').length} 项`}
-              />
+              <Metric label="最高优先级" value={highestVideoPriority} />
               <Metric label="优化建议" value={`${analysis.editReview.recommendations.length} 项`} />
             </dl>
           ) : (
@@ -573,8 +587,9 @@ export default function AnalysisReport({
           <AnalysisAgent
             key={reportIdentity}
             analysis={videoReportAnalysis}
-            file={file}
             input={agentInput}
+            mediaFile={agentMediaFile}
+            mediaIsProxy={agentMediaIsProxy}
             onInputChange={setAgentInput}
           />
         </AnalysisAgentDialog>

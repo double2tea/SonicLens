@@ -223,6 +223,59 @@ describe('isAnalysisResult', () => {
     expect(isAnalysisResult(legacyVideo, 'video')).toBe(false);
   });
 
+  it('validates optional editorial decisions while preserving legacy video reports', () => {
+    const withEditorialDecisions: VideoAnalysisResult = {
+      ...videoResult,
+      editReview: {
+        ...videoResult.editReview,
+        verdict: {
+          status: 'minor_revision',
+          rationale: '主体叙事成立，但开场节奏与品牌收束仍需局部调整。',
+        },
+        recommendations: videoResult.editReview.recommendations.map((recommendation, index) => ({
+          ...recommendation,
+          category: index === 1 ? 'sound' : recommendation.category,
+          decision: index === 0 ? 'trim' : 'polish',
+        })),
+      },
+    };
+
+    expect(isAnalysisResult(withEditorialDecisions, 'video')).toBe(true);
+    expect(
+      isAnalysisResult({
+        ...withEditorialDecisions,
+        editReview: {
+          ...withEditorialDecisions.editReview,
+          verdict: { status: 'approved', rationale: '错误状态。' },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...withEditorialDecisions,
+        editReview: {
+          ...withEditorialDecisions.editReview,
+          recommendations: withEditorialDecisions.editReview.recommendations.map(
+            (recommendation, index) =>
+              index === 0 ? { ...recommendation, decision: 'shorten' } : recommendation,
+          ),
+        },
+      }),
+    ).toBe(false);
+
+    expect(isAnalysisResult(videoResult, 'video')).toBe(true);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        editReview: {
+          ...videoResult.editReview,
+          verdict: { status: 'ready', rationale: '当前版本没有阻塞交付的剪辑问题。' },
+          recommendations: [],
+        },
+      }),
+    ).toBe(true);
+  });
+
   it('requires explicit valid video segmentation metadata', () => {
     const withoutSegmentation: Record<string, unknown> = { ...videoResult };
     delete withoutSegmentation.segmentation;
@@ -405,7 +458,7 @@ describe('isAnalysisResult', () => {
     ).toBe(true);
   });
 
-  it('rejects invalid edit review ranges, intensity and recommendation fields', () => {
+  it('validates edit review ranges, intensity and recommendation fields', () => {
     const [rhythmPoint] = videoResult.editReview.rhythm;
     const [recommendation] = videoResult.editReview.recommendations;
 
@@ -432,7 +485,7 @@ describe('isAnalysisResult', () => {
         ...videoResult,
         editReview: { ...videoResult.editReview, recommendations: [] },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isAnalysisResult({
         ...videoResult,
@@ -447,7 +500,7 @@ describe('isAnalysisResult', () => {
         ...videoResult,
         editReview: {
           ...videoResult.editReview,
-          recommendations: [{ ...recommendation, category: 'sound' }],
+          recommendations: [{ ...recommendation, category: 'performance' }],
         },
       }),
     ).toBe(false);
@@ -508,6 +561,79 @@ describe('isAnalysisResult', () => {
             soundCue: { ...firstShot.soundCue, diegeticStatus: 'unknown' },
           },
         ],
+      }),
+    ).toBe(false);
+  });
+
+  it('validates optional video quality metadata and its bounded repair state', () => {
+    const passQuality = {
+      status: 'pass',
+      detailLevel: 'full',
+      score: 84,
+      passThreshold: 84,
+      issues: [],
+      weakestShotIndexes: [],
+      automaticRepairs: 0,
+      recoveryReasons: [],
+      model: 'gemini-test',
+    };
+    expect(isAnalysisResult({ ...videoResult, quality: passQuality }, 'video')).toBe(true);
+    expect(isAnalysisResult(videoResult, 'video')).toBe(true);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, status: 'limited', score: 100 },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: {
+          ...passQuality,
+          status: 'enriched',
+          automaticRepairs: 0,
+          recoveryReasons: ['low_detail'],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, score: 101 },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, weakestShotIndexes: [0, 0] },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, recoveryReasons: ['low_detail', 'repair_failed'] },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, detailLevel: 'compact' },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: { ...passQuality, recoveryReasons: ['max_tokens'] },
+      }),
+    ).toBe(false);
+    expect(
+      isAnalysisResult({
+        ...videoResult,
+        quality: {
+          ...passQuality,
+          detailLevel: 'compact',
+          recoveryReasons: ['max_tokens', 'invalid_response'],
+        },
       }),
     ).toBe(false);
   });
@@ -626,6 +752,26 @@ describe('analysis history', () => {
       expect(migratedItem.analysis.editReview.recommendations).toHaveLength(1);
       expect(migratedItem.analysis.segmentation.mode).toBe('sequence');
       expect(window.localStorage.getItem('soniclens.analysisHistory')).toBe(storedValue);
+    } finally {
+      setItemSpy.mockRestore();
+    }
+  });
+
+  it('reports a quota failure when a new analysis cannot be cached', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage quota exceeded.', 'QuotaExceededError');
+    });
+
+    try {
+      expect(() =>
+        cacheAnalysisHistoryItem({
+          fileName: 'quota-video.mp4',
+          fileSize: 4096,
+          analysisMode: 'video',
+          processingSummary: 'Video analysis',
+          analysis: videoResult,
+        }),
+      ).toThrow('Storage quota exceeded.');
     } finally {
       setItemSpy.mockRestore();
     }

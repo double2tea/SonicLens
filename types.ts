@@ -63,9 +63,17 @@ export type EditRecommendationCategory =
   | 'vfx'
   | 'motion_graphics'
   | 'typography'
-  | 'branding';
+  | 'branding'
+  | 'sound';
 
 export type EditPriority = 'high' | 'medium' | 'low';
+export type VideoEditorialStatus = 'ready' | 'minor_revision' | 'major_revision';
+export type VideoEditDecision = 'trim' | 'remove' | 'replace' | 'reorder' | 'polish' | 'verify';
+
+export interface VideoEditorialVerdict {
+  status: VideoEditorialStatus;
+  rationale: string;
+}
 
 export interface VideoRhythmPoint {
   startSeconds: number;
@@ -80,12 +88,14 @@ export interface VideoEditRecommendation {
   endSeconds: number;
   category: EditRecommendationCategory;
   priority: EditPriority;
+  decision?: VideoEditDecision;
   evidence: string;
   action: string;
   expectedImpact: string;
 }
 
 export interface VideoEditReview {
+  verdict?: VideoEditorialVerdict;
   strengths: string[];
   topIssues: string[];
   rhythmSummary: string;
@@ -99,6 +109,24 @@ export interface VideoEditReview {
   recommendations: VideoEditRecommendation[];
 }
 
+export type VideoAnalysisQualityStatus = 'pass' | 'enriched' | 'limited';
+export type VideoAnalysisDetailLevel = 'full' | 'compact';
+export type VideoAnalysisRecoveryReason =
+  'max_tokens' | 'invalid_response' | 'low_detail' | 'repair_failed';
+export const VIDEO_ANALYSIS_PASS_SCORE = 78;
+
+export interface VideoAnalysisQuality {
+  status: VideoAnalysisQualityStatus;
+  detailLevel: VideoAnalysisDetailLevel;
+  score: number;
+  passThreshold: number;
+  issues: string[];
+  weakestShotIndexes: number[];
+  automaticRepairs: 0 | 1;
+  recoveryReasons: VideoAnalysisRecoveryReason[];
+  model: string;
+}
+
 export interface VideoAnalysisResult {
   type: 'video';
   title: string;
@@ -110,6 +138,7 @@ export interface VideoAnalysisResult {
   segmentation: VideoSegmentation;
   shots: VideoShot[];
   editReview: VideoEditReview;
+  quality?: VideoAnalysisQuality;
   seedAudio?: SeedAudioBrief;
   risks: string[];
 }
@@ -371,10 +400,25 @@ const isEditRecommendationCategory = (value: unknown): value is EditRecommendati
   value === 'vfx' ||
   value === 'motion_graphics' ||
   value === 'typography' ||
-  value === 'branding';
+  value === 'branding' ||
+  value === 'sound';
 
 const isEditPriority = (value: unknown): value is EditPriority =>
   value === 'high' || value === 'medium' || value === 'low';
+
+const isVideoEditorialStatus = (value: unknown): value is VideoEditorialStatus =>
+  value === 'ready' || value === 'minor_revision' || value === 'major_revision';
+
+const isVideoEditDecision = (value: unknown): value is VideoEditDecision =>
+  value === 'trim' ||
+  value === 'remove' ||
+  value === 'replace' ||
+  value === 'reorder' ||
+  value === 'polish' ||
+  value === 'verify';
+
+const isVideoEditorialVerdict = (value: unknown): value is VideoEditorialVerdict =>
+  isRecord(value) && isVideoEditorialStatus(value.status) && isString(value.rationale);
 
 const isVideoTimeRange = (
   startSeconds: unknown,
@@ -404,6 +448,7 @@ const isVideoEditRecommendation = (
   isVideoTimeRange(value.startSeconds, value.endSeconds, durationSeconds) &&
   isEditRecommendationCategory(value.category) &&
   isEditPriority(value.priority) &&
+  isOptionalFieldValid(value, 'decision', isVideoEditDecision) &&
   isString(value.evidence) &&
   isString(value.action) &&
   isString(value.expectedImpact);
@@ -437,6 +482,7 @@ const isVideoEditReview = (value: unknown, durationSeconds: number): value is Vi
   const recommendations = value.recommendations;
 
   return (
+    isOptionalFieldValid(value, 'verdict', isVideoEditorialVerdict) &&
     isStringArray(value.strengths) &&
     isStringArray(value.topIssues) &&
     isString(value.rhythmSummary) &&
@@ -446,11 +492,62 @@ const isVideoEditReview = (value: unknown, durationSeconds: number): value is Vi
     isString(value.visualFinish.vfxAndMotion) &&
     isString(value.visualFinish.typographyAndBranding) &&
     Array.isArray(recommendations) &&
-    recommendations.length > 0 &&
     recommendations.every((recommendation) =>
       isVideoEditRecommendation(recommendation, durationSeconds),
     )
   );
+};
+
+const isVideoAnalysisQuality = (value: unknown, shotCount: number): boolean => {
+  if (
+    !isRecord(value) ||
+    (value.status !== 'pass' && value.status !== 'enriched' && value.status !== 'limited') ||
+    (value.detailLevel !== 'full' && value.detailLevel !== 'compact') ||
+    !isInteger(value.score) ||
+    value.score < 0 ||
+    value.score > 100 ||
+    !isInteger(value.passThreshold) ||
+    value.passThreshold < 1 ||
+    value.passThreshold > 100 ||
+    !isStringArray(value.issues) ||
+    !Array.isArray(value.weakestShotIndexes) ||
+    !value.weakestShotIndexes.every(
+      (index) => isInteger(index) && index >= 0 && index < shotCount,
+    ) ||
+    new Set(value.weakestShotIndexes).size !== value.weakestShotIndexes.length ||
+    (value.automaticRepairs !== 0 && value.automaticRepairs !== 1) ||
+    !Array.isArray(value.recoveryReasons) ||
+    !value.recoveryReasons.every(
+      (reason) =>
+        reason === 'max_tokens' ||
+        reason === 'invalid_response' ||
+        reason === 'low_detail' ||
+        reason === 'repair_failed',
+    ) ||
+    new Set(value.recoveryReasons).size !== value.recoveryReasons.length ||
+    !isString(value.model) ||
+    value.model.trim().length === 0
+  ) {
+    return false;
+  }
+
+  const passesScore = value.score >= value.passThreshold;
+  const usedLowDetailRepair = value.recoveryReasons.includes('low_detail');
+  const repairFailed = value.recoveryReasons.includes('repair_failed');
+  const recoveredFromMaxTokens = value.recoveryReasons.includes('max_tokens');
+  const technicalRecoveryCount = value.recoveryReasons.filter(
+    (reason) => reason === 'max_tokens' || reason === 'invalid_response',
+  ).length;
+  if (technicalRecoveryCount > 1) return false;
+  if ((value.detailLevel === 'compact') !== recoveredFromMaxTokens) return false;
+  if (repairFailed && value.status !== 'limited') return false;
+  if (value.status === 'pass') {
+    return passesScore && value.automaticRepairs === 0 && !usedLowDetailRepair && !repairFailed;
+  }
+  if (value.status === 'enriched') {
+    return passesScore && value.automaticRepairs === 1 && usedLowDetailRepair && !repairFailed;
+  }
+  return !passesScore && value.automaticRepairs === 1 && usedLowDetailRepair;
 };
 
 const hasContinuousShotTimeline = (shots: VideoShot[], durationSeconds: number): boolean => {
@@ -487,6 +584,9 @@ const isVideoAnalysisResult = (value: UnknownRecord): boolean => {
     !isVideoSegmentation(value.segmentation) ||
     !Array.isArray(shots) ||
     !isVideoEditReview(value.editReview, durationSeconds) ||
+    !isOptionalFieldValid(value, 'quality', (quality) =>
+      isVideoAnalysisQuality(quality, shots.length),
+    ) ||
     !isOptionalFieldValid(value, 'seedAudio', isSeedAudioBrief) ||
     !isStringArray(value.risks)
   ) {

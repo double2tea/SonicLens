@@ -10,22 +10,28 @@ interface ConversationMessage extends AnalysisAgentMessage {
 
 interface AnalysisAgentProps {
   analysis: VideoAnalysisResult;
-  file: File | null;
   input: string;
+  mediaFile: File | null;
+  mediaIsProxy: boolean;
   onInputChange: (value: string) => void;
 }
 
-const quickQuestions = ['找出最拖节奏的段落', '检查转场和包装问题', '按优先级整理剪辑清单'];
+const quickQuestions = [
+  '判断当前版本能否交付',
+  '给出最先执行的一项修改',
+  '核对报告中的事实与时间码',
+];
 
 export default function AnalysisAgent({
   analysis,
-  file,
   input,
+  mediaFile,
+  mediaIsProxy,
   onInputChange,
 }: AnalysisAgentProps) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
-  const [reviewOriginal, setReviewOriginal] = useState(false);
+  const [reviewMedia, setReviewMedia] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [streamAnnouncement, setStreamAnnouncement] = useState('');
   const controllerRef = useRef<AbortController | null>(null);
@@ -98,7 +104,8 @@ export default function AnalysisAgent({
           analysis,
           messages: priorMessages,
           userMessage,
-          media: reviewOriginal && file ? file : undefined,
+          media: reviewMedia && mediaFile ? mediaFile : undefined,
+          mediaIsProxy,
           signal: controller.signal,
         },
         queueDelta,
@@ -113,7 +120,7 @@ export default function AnalysisAgent({
         ),
       );
       setStreamAnnouncement('Agent 响应完成。');
-      setReviewOriginal(false);
+      setReviewMedia(false);
     } catch (requestError: unknown) {
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = null;
@@ -171,21 +178,25 @@ export default function AnalysisAgent({
     <section className="flex h-full min-h-0 flex-col" aria-label="Agent 对话">
       <div className="flex shrink-0 flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <p className="max-w-xl text-xs leading-5 text-[var(--text-muted)]">
-          默认只读取当前结构化报告；开启后，本轮才会重新发送原始视频进行复核。
+          {mediaIsProxy
+            ? '默认只读取当前结构化报告；开启后，本轮会重新发送本地生成的轻量分析代理，不会上传原始大视频。'
+            : '默认只读取当前结构化报告；开启后，本轮才会重新发送视频进行复核。'}
         </p>
         <button
           type="button"
-          aria-pressed={reviewOriginal}
-          disabled={!file || isSending}
-          onClick={() => setReviewOriginal((current) => !current)}
+          aria-pressed={reviewMedia}
+          disabled={!mediaFile || isSending}
+          onClick={() => setReviewMedia((current) => !current)}
           className={`inline-flex min-h-10 items-center gap-2 self-start rounded-md border px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-45 ${
-            reviewOriginal
+            reviewMedia
               ? 'accent-surface accent-text'
               : 'hairline text-[var(--text-muted)] hover:text-[var(--text)]'
           }`}
         >
           <Eye size={14} />
-          {reviewOriginal ? '本轮会重新查看原片' : '本轮重新查看原片'}
+          {reviewMedia
+            ? `本轮会重新查看${mediaIsProxy ? '分析代理' : '原片'}`
+            : `本轮重新查看${mediaIsProxy ? '分析代理' : '原片'}`}
         </button>
       </div>
 
@@ -298,9 +309,9 @@ export default function AnalysisAgent({
         </button>
       </form>
 
-      {!file && (
+      {!mediaFile && (
         <p className="mt-3 text-xs text-[var(--text-muted)]">
-          这条历史报告未保留原始视频；Agent 仍可基于报告继续讨论。
+          这条历史报告未保留视频媒体；Agent 仍可基于报告继续讨论。
         </p>
       )}
       {error && (

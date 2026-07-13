@@ -24,13 +24,16 @@ import {
 } from 'lucide-react';
 import { formatTimestamp } from '../services/timecode';
 import type {
-  SeedAudioContentMode,
-  SeedAudioDeliveryMode,
   EditPriority,
   EditRecommendationCategory,
+  SeedAudioContentMode,
+  SeedAudioDeliveryMode,
   SoundPriority,
   SoundRoute,
+  VideoAnalysisQuality,
   VideoAnalysisResult,
+  VideoEditDecision,
+  VideoEditorialStatus,
   VideoShot,
 } from '../types';
 import VideoPreview from './VideoPreview';
@@ -94,6 +97,22 @@ const editCategoryLabels: Record<EditRecommendationCategory, string> = {
   motion_graphics: '动态包装',
   typography: '字体',
   branding: '品牌',
+  sound: '声音',
+};
+
+const editDecisionLabels: Record<VideoEditDecision, string> = {
+  trim: '缩短',
+  remove: '删除',
+  replace: '替换',
+  reorder: '重排',
+  polish: '精修',
+  verify: '核对',
+};
+
+const editorialStatusLabels: Record<VideoEditorialStatus, string> = {
+  ready: '可直接交付',
+  minor_revision: '小改后交付',
+  major_revision: '需要重剪',
 };
 
 const priorityOrder: Record<EditPriority, number> = {
@@ -107,6 +126,89 @@ const getShotDuration = (shot: VideoShot): number =>
 
 const formatRange = (shot: VideoShot): string =>
   `${formatTimestamp(shot.startSeconds)}–${formatTimestamp(shot.endSeconds)}`;
+
+const recoveryReasonLabels = {
+  max_tokens: '输出截断后使用紧凑结构恢复',
+  invalid_response: '结构校验失败后重新生成',
+  low_detail: '首次结果信息偏薄，已启动定向深化',
+  repair_failed: '定向深化请求未完成，已保留首次结果',
+} as const;
+
+function AnalysisQualityNotice({ quality }: { quality?: VideoAnalysisQuality }) {
+  if (!quality) return null;
+
+  const isLimited = quality.status === 'limited';
+  const repairFailed = quality.recoveryReasons.includes('repair_failed');
+  const title =
+    quality.status === 'pass'
+      ? '证据密度检查通过'
+      : quality.status === 'enriched'
+        ? '已自动深化低信息内容'
+        : '当前证据密度仍有限';
+  const description = repairFailed
+    ? '定向深化请求未完成，当前保留首次结果；请优先人工复核下列问题。'
+    : isLimited
+      ? '自动深化已达到单次预算，当前展示证据评分更高的版本；请优先人工复核下列问题。'
+      : quality.status === 'enriched'
+        ? '首次结果偏薄，系统已针对最低信息内容补充证据，并保留评分更高的版本。'
+        : '本次结果通过本地证据密度、重复率与建议可执行性检查；此分数不代表事实识别准确率。';
+
+  return (
+    <section
+      aria-label="分析质量"
+      className="rounded-lg border hairline bg-black/[0.018] px-4 py-4 sm:px-5"
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex max-w-3xl gap-3">
+          <span className="accent-surface mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg accent-text">
+            {quality.status === 'pass' ? (
+              <Check aria-hidden="true" size={15} />
+            ) : quality.status === 'enriched' ? (
+              <WandSparkles aria-hidden="true" size={15} />
+            ) : (
+              <ShieldAlert aria-hidden="true" size={15} />
+            )}
+          </span>
+          <div>
+            <p className="text-[0.75rem] font-semibold text-[var(--text)]">{title}</p>
+            <p className="mt-1.5 text-[0.72rem] leading-5 text-[var(--text-muted)] text-pretty">
+              {description}
+            </p>
+            <p className="mt-1 font-mono text-[0.6rem] text-[var(--text-muted)]">{quality.model}</p>
+            {(quality.recoveryReasons.length > 0 || quality.issues.length > 0) && (
+              <ul className="mt-3 space-y-1 text-[0.68rem] leading-5 text-[var(--text-secondary)]">
+                {quality.recoveryReasons.map((reason) => (
+                  <li key={reason}>· {recoveryReasonLabels[reason]}</li>
+                ))}
+                {quality.issues.slice(0, 3).map((issue) => (
+                  <li key={issue}>· 仍建议人工复核：{issue}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        <dl className="grid shrink-0 grid-cols-3 gap-x-5 border-t hairline pt-3 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+          <div>
+            <dt className="text-[0.58rem] text-[var(--text-muted)]">证据评分</dt>
+            <dd className="data-value mt-1 text-xs text-[var(--text)]">{quality.score}/100</dd>
+          </div>
+          <div>
+            <dt className="text-[0.58rem] text-[var(--text-muted)]">输出结构</dt>
+            <dd className="mt-1 text-xs font-semibold text-[var(--text)]">
+              {quality.detailLevel === 'full' ? '完整' : '紧凑'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[0.58rem] text-[var(--text-muted)]">深化尝试</dt>
+            <dd className="data-value mt-1 text-xs text-[var(--text)]">
+              {quality.automaticRepairs}/1
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  );
+}
 
 function DetailBlock({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   if (!value.trim()) return null;
@@ -296,55 +398,67 @@ function DiagnosticOverview({ analysis }: { analysis: VideoAnalysisResult }) {
             id="diagnostic-overview-title"
             className="mt-2 text-xl font-semibold tracking-[-0.04em]"
           >
-            诊断总览
+            判断依据
           </h2>
         </div>
         <p className="max-w-md text-xs leading-5 text-[var(--text-muted)]">
-          先识别有效表达，再处理影响观看体验的核心问题。
+          先看影响交付的核心问题，再确认应当保留的有效表达。
         </p>
       </div>
 
-      <div className="mt-6 grid overflow-hidden rounded-xl border hairline lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-        <div className="border-b hairline p-5 lg:border-b-0">
+      <div className="mt-6 grid overflow-hidden rounded-xl border hairline lg:grid-cols-[1.35fr_0.65fr] lg:divide-x lg:divide-y-0">
+        <div className="accent-surface border-b p-5 lg:border-b-0">
+          <p className="flex items-center gap-2 text-[0.7rem] font-semibold text-[var(--text)]">
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-black/[0.065] text-[var(--text-secondary)]">
+              <AlertCircle aria-hidden="true" size={13} />
+            </span>
+            优先问题
+          </p>
+          {topIssues.length > 0 ? (
+            <ol className="mt-4 space-y-3">
+              {topIssues.map((issue, index) => (
+                <li
+                  key={`${index}-${issue}`}
+                  className="grid grid-cols-[1.4rem_minmax(0,1fr)] gap-3 text-[0.84rem] font-medium leading-6 text-[var(--text)]"
+                >
+                  <span className="data-value pt-0.5 text-[0.65rem] text-[var(--accent-strong)]">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  {issue}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-4 text-[0.78rem] leading-6 text-[var(--text-secondary)]">
+              未发现影响交付的核心问题。
+            </p>
+          )}
+        </div>
+
+        <div className="p-5">
           <p className="flex items-center gap-2 text-[0.7rem] font-semibold text-[var(--text-secondary)]">
             <span className="grid h-6 w-6 place-items-center rounded-full accent-surface accent-text">
               <Check aria-hidden="true" size={13} />
             </span>
-            已经成立
+            保留项
           </p>
-          <ul className="mt-4 space-y-3">
-            {strengths.map((strength, index) => (
-              <li
-                key={`${index}-${strength}`}
-                className="flex gap-3 text-[0.78rem] leading-6 text-[var(--text-secondary)]"
-              >
-                <CircleDot aria-hidden="true" size={12} className="mt-1.5 shrink-0 accent-text" />
-                {strength}
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="bg-black/[0.018] p-5">
-          <p className="flex items-center gap-2 text-[0.7rem] font-semibold text-[var(--text-secondary)]">
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-black/[0.065] text-[var(--text-secondary)]">
-              <AlertCircle aria-hidden="true" size={13} />
-            </span>
-            优先处理
-          </p>
-          <ol className="mt-4 space-y-3">
-            {topIssues.map((issue, index) => (
-              <li
-                key={`${index}-${issue}`}
-                className="grid grid-cols-[1.4rem_minmax(0,1fr)] gap-3 text-[0.78rem] leading-6 text-[var(--text-secondary)]"
-              >
-                <span className="data-value pt-0.5 text-[0.65rem] text-[var(--text-muted)]">
-                  {String(index + 1).padStart(2, '0')}
-                </span>
-                {issue}
-              </li>
-            ))}
-          </ol>
+          {strengths.length > 0 ? (
+            <ul className="mt-4 space-y-3">
+              {strengths.map((strength, index) => (
+                <li
+                  key={`${index}-${strength}`}
+                  className="flex gap-3 text-[0.74rem] leading-5 text-[var(--text-secondary)]"
+                >
+                  <CircleDot aria-hidden="true" size={12} className="mt-1 shrink-0 accent-text" />
+                  {strength}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-4 text-[0.74rem] leading-5 text-[var(--text-muted)]">
+              暂无明确保留项。
+            </p>
+          )}
         </div>
       </div>
     </section>
@@ -499,64 +613,77 @@ function EditActionList({
         <div>
           <p className="eyebrow">Action list</p>
           <h2 id="edit-actions-title" className="mt-2 text-xl font-semibold tracking-[-0.04em]">
-            剪辑优化清单
+            优先修改
           </h2>
         </div>
         <p className="text-xs text-[var(--text-muted)]">按优先级排序 · 每项可回看对应时间码</p>
       </div>
 
-      <div className="mt-6 divide-y hairline border-y hairline">
-        {recommendations.map((recommendation, index) => (
-          <article
-            key={`${recommendation.startSeconds}-${recommendation.category}-${index}`}
-            className="grid gap-4 py-5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-6"
-          >
-            <div>
-              <button
-                type="button"
-                onClick={() => onSeek(recommendation.startSeconds)}
-                disabled={!canSeek}
-                className="group inline-flex items-center gap-2 rounded-md font-mono text-[0.68rem] font-semibold text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-45"
-              >
-                {formatTimestamp(recommendation.startSeconds)}–
-                {formatTimestamp(recommendation.endSeconds)}
-                <ArrowRight
-                  aria-hidden="true"
-                  size={12}
-                  className="transition-transform group-hover:translate-x-0.5"
-                />
-              </button>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <span
-                  className={`rounded-md px-2 py-1 text-[0.7rem] font-semibold ${
-                    recommendation.priority === 'high'
-                      ? 'accent-surface accent-text'
-                      : 'bg-black/[0.045] text-[var(--text-muted)]'
-                  }`}
+      {recommendations.length === 0 ? (
+        <p className="accent-surface mt-6 rounded-lg border px-5 py-4 text-sm font-medium text-[var(--text)]">
+          {analysis.editReview.verdict?.status === 'ready'
+            ? '没有必须修改项'
+            : '未返回修改建议，需人工复核'}
+        </p>
+      ) : (
+        <div className="mt-6 divide-y hairline border-y hairline">
+          {recommendations.map((recommendation, index) => (
+            <article
+              key={`${recommendation.startSeconds}-${recommendation.category}-${index}`}
+              className="grid gap-4 py-5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-6"
+            >
+              <div>
+                <button
+                  type="button"
+                  onClick={() => onSeek(recommendation.startSeconds)}
+                  disabled={!canSeek}
+                  className="group inline-flex items-center gap-2 rounded-md font-mono text-[0.68rem] font-semibold text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  {editPriorityLabels[recommendation.priority]}
-                </span>
-                <span className="rounded-md border hairline px-2 py-1 text-[0.7rem] text-[var(--text-muted)]">
-                  {editCategoryLabels[recommendation.category]}
-                </span>
+                  {formatTimestamp(recommendation.startSeconds)}–
+                  {formatTimestamp(recommendation.endSeconds)}
+                  <ArrowRight
+                    aria-hidden="true"
+                    size={12}
+                    className="transition-transform group-hover:translate-x-0.5"
+                  />
+                </button>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span
+                    className={`rounded-md px-2 py-1 text-[0.7rem] font-semibold ${
+                      recommendation.priority === 'high'
+                        ? 'accent-surface accent-text'
+                        : 'bg-black/[0.045] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {editPriorityLabels[recommendation.priority]}
+                  </span>
+                  <span className="rounded-md border hairline px-2 py-1 text-[0.7rem] text-[var(--text-muted)]">
+                    {editCategoryLabels[recommendation.category]}
+                  </span>
+                  {recommendation.decision && (
+                    <span className="rounded-md border hairline px-2 py-1 text-[0.7rem] font-semibold text-[var(--text-secondary)]">
+                      {editDecisionLabels[recommendation.decision]}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="min-w-0">
-              <h3 className="text-[0.9rem] font-semibold leading-6 text-[var(--text)]">
-                {recommendation.action}
-              </h3>
-              <p className="mt-2 text-[0.74rem] leading-5 text-[var(--text-muted)]">
-                依据：{recommendation.evidence}
-              </p>
-              <p className="mt-2 flex gap-2 text-[0.74rem] leading-5 text-[var(--text-secondary)]">
-                <Sparkles aria-hidden="true" size={13} className="mt-1 shrink-0 accent-text" />
-                {recommendation.expectedImpact}
-              </p>
-            </div>
-          </article>
-        ))}
-      </div>
+              <div className="min-w-0">
+                <h3 className="text-[0.9rem] font-semibold leading-6 text-[var(--text)]">
+                  {recommendation.action}
+                </h3>
+                <p className="mt-2 text-[0.74rem] leading-5 text-[var(--text-muted)]">
+                  依据：{recommendation.evidence}
+                </p>
+                <p className="mt-2 flex gap-2 text-[0.74rem] leading-5 text-[var(--text-secondary)]">
+                  <Sparkles aria-hidden="true" size={13} className="mt-1 shrink-0 accent-text" />
+                  {recommendation.expectedImpact}
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -722,6 +849,10 @@ export default function VideoAnalysisReport({
   const isShotSegmentation = analysis.segmentation.mode === 'shot';
   const detection = analysis.segmentation.detection;
   const analysisUnitLabel = isShotSegmentation ? '候选镜头' : '分析段落';
+  const verdict = analysis.editReview.verdict;
+  const hasVerdict = verdict !== undefined;
+  const verdictLabel = verdict ? editorialStatusLabels[verdict.status] : null;
+  const verdictRationale = verdict?.rationale ?? analysis.summary;
   const activeShotIndex = useMemo(
     () =>
       analysis.shots.findIndex(
@@ -738,17 +869,30 @@ export default function VideoAnalysisReport({
   return (
     <div className="space-y-7">
       <section className="grid gap-7 border-b hairline pb-7 lg:grid-cols-[minmax(0,1.12fr)_minmax(19rem,0.88fr)] lg:items-start">
-        <VideoPreview ref={previewRef} file={file} onTimeChange={setCurrentTime} />
-
-        <div className="lg:pt-1">
-          <p className="eyebrow">Video reading</p>
+        <div className="lg:order-2 lg:pt-1">
+          <p className="eyebrow">{hasVerdict ? 'Editorial verdict' : 'Video reading'}</p>
           <h2 className="mt-3 flex items-center gap-2.5 text-2xl font-semibold tracking-[-0.045em]">
             <Film aria-hidden="true" size={20} className="accent-text" />
-            审片摘要
+            {hasVerdict ? '审片结论' : '审片摘要'}
           </h2>
+          {verdictLabel && (
+            <p className="accent-surface mt-4 inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[0.7rem]">
+              <span className="text-[var(--text-muted)]">交付判断</span>
+              <strong className="font-semibold text-[var(--accent-strong)]">{verdictLabel}</strong>
+            </p>
+          )}
           <p className="mt-4 text-sm leading-7 text-[var(--text-secondary)] text-pretty">
-            {analysis.summary}
+            {verdictRationale}
           </p>
+
+          {verdict && (
+            <div className="mt-6 border-t hairline pt-5">
+              <p className="text-[0.68rem] font-medium text-[var(--text-muted)]">内容与目的</p>
+              <p className="mt-2 text-[0.8rem] leading-6 text-[var(--text-secondary)] text-pretty">
+                {analysis.summary}
+              </p>
+            </div>
+          )}
 
           <div className="mt-6 border-t hairline pt-5">
             <p className="text-[0.68rem] font-medium text-[var(--text-muted)]">叙事弧线</p>
@@ -781,53 +925,22 @@ export default function VideoAnalysisReport({
             </div>
           </dl>
         </div>
+
+        <div className="lg:order-1">
+          <VideoPreview ref={previewRef} file={file} onTimeChange={setCurrentTime} />
+        </div>
       </section>
 
-      {(detection || !isShotSegmentation) && (
-        <section
-          aria-label="时间线识别依据"
-          className="rounded-lg border hairline bg-black/[0.018] px-4 py-4 sm:px-5"
-        >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="max-w-2xl">
-              <p className="text-[0.72rem] font-semibold text-[var(--text)]">
-                {detection ? '两阶段时间线' : '镜头总数未可靠确认'}
-              </p>
-              <p className="mt-1.5 text-[0.72rem] leading-5 text-[var(--text-muted)] text-pretty">
-                {analysis.segmentation.note}
-              </p>
-            </div>
-            {detection && (
-              <dl className="grid shrink-0 grid-cols-3 gap-x-5 border-t hairline pt-3 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
-                <div>
-                  <dt className="text-[0.58rem] text-[var(--text-muted)]">切点采样</dt>
-                  <dd className="data-value mt-1 text-xs text-[var(--text)]">
-                    {detection.sampleRateFps} FPS
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[0.58rem] text-[var(--text-muted)]">检测切点</dt>
-                  <dd className="data-value mt-1 text-xs text-[var(--text)]">
-                    {detection.detectedCuts}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[0.58rem] text-[var(--text-muted)]">覆盖置信</dt>
-                  <dd className="mt-1 text-xs font-semibold text-[var(--text)]">
-                    {detection.confidence === 'high'
-                      ? '高'
-                      : detection.confidence === 'medium'
-                        ? '中'
-                        : '低'}
-                  </dd>
-                </div>
-              </dl>
-            )}
-          </div>
-        </section>
-      )}
-
       <DiagnosticOverview analysis={analysis} />
+
+      <EditActionList
+        analysis={analysis}
+        canSeek={Boolean(file)}
+        onSeek={(timeInSeconds) => {
+          previewRef.current?.seekTo(timeInSeconds);
+          setCurrentTime(timeInSeconds);
+        }}
+      />
 
       <RhythmReview
         analysis={analysis}
@@ -840,73 +953,158 @@ export default function VideoAnalysisReport({
 
       <VisualFinishReview analysis={analysis} />
 
-      <EditActionList
-        analysis={analysis}
-        canSeek={Boolean(file)}
-        onSeek={(timeInSeconds) => {
-          previewRef.current?.seekTo(timeInSeconds);
-          setCurrentTime(timeInSeconds);
-        }}
-      />
+      <details className="group border-y hairline py-5">
+        <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center justify-between gap-4">
+            <span>
+              <span className="eyebrow block">Evidence & confidence</span>
+              <span
+                role="heading"
+                aria-level={2}
+                className="mt-2 block text-xl font-semibold tracking-[-0.04em]"
+              >
+                分析依据与可信度
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-3 text-xs font-normal text-[var(--text-muted)]">
+              {analysis.quality ? `证据评分 ${analysis.quality.score}/100` : '查看识别说明'}
+              <ChevronDown
+                aria-hidden="true"
+                size={16}
+                className="transition-transform group-open:rotate-180"
+              />
+            </span>
+          </span>
+        </summary>
 
-      <section aria-labelledby="segment-review-title">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div>
-            <p className="eyebrow">{isShotSegmentation ? 'Shot review' : 'Sequence review'}</p>
-            <h2 id="segment-review-title" className="mt-2 text-xl font-semibold tracking-[-0.04em]">
-              {isShotSegmentation ? '逐镜复核' : '段落复核'}
-            </h2>
-          </div>
-          <p className="max-w-md text-xs leading-5 text-[var(--text-muted)]">
-            {isShotSegmentation
-              ? '点击时间码或时间轴片段回看原片；逐镜检查画面、动作、节奏与转场是否成立。'
-              : '点击时间码或时间轴片段回看原片；按段检查画面、动作、节奏与转场是否成立。'}
-          </p>
+        <div className="mt-5 space-y-4 border-t hairline pt-5">
+          <AnalysisQualityNotice quality={analysis.quality} />
+
+          <section
+            aria-label="时间线识别依据"
+            className="rounded-lg border hairline bg-black/[0.018] px-4 py-4 sm:px-5"
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-[0.72rem] font-semibold text-[var(--text)]">
+                  {detection
+                    ? '两阶段时间线'
+                    : isShotSegmentation
+                      ? '时间线识别说明'
+                      : '镜头总数未可靠确认'}
+                </p>
+                <p className="mt-1.5 text-[0.72rem] leading-5 text-[var(--text-muted)] text-pretty">
+                  {analysis.segmentation.note}
+                </p>
+              </div>
+              {detection && (
+                <dl className="grid shrink-0 grid-cols-3 gap-x-5 border-t hairline pt-3 sm:border-l sm:border-t-0 sm:pl-5 sm:pt-0">
+                  <div>
+                    <dt className="text-[0.58rem] text-[var(--text-muted)]">切点采样</dt>
+                    <dd className="data-value mt-1 text-xs text-[var(--text)]">
+                      {detection.sampleRateFps} FPS
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[0.58rem] text-[var(--text-muted)]">检测切点</dt>
+                    <dd className="data-value mt-1 text-xs text-[var(--text)]">
+                      {detection.detectedCuts}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[0.58rem] text-[var(--text-muted)]">覆盖置信</dt>
+                    <dd className="mt-1 text-xs font-semibold text-[var(--text)]">
+                      {detection.confidence === 'high'
+                        ? '高'
+                        : detection.confidence === 'medium'
+                          ? '中'
+                          : '低'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          </section>
         </div>
+      </details>
 
-        {analysis.shots.length > 0 ? (
-          <>
-            <div className="mt-6 flex h-11 gap-1" aria-label={`${analysisUnitLabel}时间轴`}>
-              {analysis.shots.map((shot, index) => (
-                <button
-                  key={`${shot.startSeconds}-${shot.endSeconds}-${index}`}
-                  type="button"
-                  onClick={() => seekToShot(shot)}
-                  disabled={!file}
-                  aria-label={`跳转至${analysisUnitLabel} ${index + 1}，${formatRange(shot)}`}
-                  aria-pressed={activeShotIndex === index}
-                  title={`${formatRange(shot)} · ${shot.shotType}`}
-                  className={`min-w-2 rounded-[0.25rem] border disabled:cursor-not-allowed disabled:opacity-45 ${
-                    activeShotIndex === index
-                      ? 'border-[var(--accent)] bg-[var(--accent)]'
-                      : 'hairline bg-black/[0.045] hover:border-[var(--line-strong)] hover:bg-black/[0.075]'
-                  }`}
-                  style={{ flexGrow: getShotDuration(shot) }}
-                />
-              ))}
-            </div>
+      <details className="group border-y hairline py-5">
+        <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center justify-between gap-4">
+            <span>
+              <span className="eyebrow block">
+                {isShotSegmentation ? 'Shot evidence' : 'Sequence evidence'}
+              </span>
+              <span
+                role="heading"
+                aria-level={2}
+                className="mt-2 block text-xl font-semibold tracking-[-0.04em]"
+              >
+                {isShotSegmentation ? '逐镜证据' : '段落证据'}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-3 text-xs font-normal text-[var(--text-muted)]">
+              {analysis.shots.length} 个{analysisUnitLabel}
+              <ChevronDown
+                aria-hidden="true"
+                size={16}
+                className="transition-transform group-open:rotate-180"
+              />
+            </span>
+          </span>
+        </summary>
 
-            <div className="mt-2">
-              {analysis.shots.map((shot, index) => (
-                <ShotCard
-                  key={`${shot.startSeconds}-${shot.endSeconds}-${index}`}
-                  active={activeShotIndex === index}
-                  canSeek={Boolean(file)}
-                  index={index}
-                  isShotSegmentation={isShotSegmentation}
-                  shot={shot}
-                  onSeek={() => seekToShot(shot)}
-                  onDiscuss={onDiscussShot ? () => onDiscussShot(shot) : undefined}
-                />
-              ))}
-            </div>
-          </>
-        ) : (
-          <p className="mt-6 border-y hairline py-6 text-sm text-[var(--text-muted)]">
-            本次分析没有返回可用{analysisUnitLabel}。
+        <div className="mt-5 border-t hairline pt-5">
+          <p className="max-w-2xl text-xs leading-5 text-[var(--text-muted)]">
+            {isShotSegmentation
+              ? '点击时间码或时间轴片段回看原片；逐镜核对画面、动作、节奏与转场证据。'
+              : '点击时间码或时间轴片段回看原片；按段核对画面、动作、节奏与转场证据。'}
           </p>
-        )}
-      </section>
+
+          {analysis.shots.length > 0 ? (
+            <>
+              <div className="mt-6 flex h-11 gap-1" aria-label={`${analysisUnitLabel}时间轴`}>
+                {analysis.shots.map((shot, index) => (
+                  <button
+                    key={`${shot.startSeconds}-${shot.endSeconds}-${index}`}
+                    type="button"
+                    onClick={() => seekToShot(shot)}
+                    disabled={!file}
+                    aria-label={`跳转至${analysisUnitLabel} ${index + 1}，${formatRange(shot)}`}
+                    aria-pressed={activeShotIndex === index}
+                    title={`${formatRange(shot)} · ${shot.shotType}`}
+                    className={`min-w-2 rounded-[0.25rem] border disabled:cursor-not-allowed disabled:opacity-45 ${
+                      activeShotIndex === index
+                        ? 'border-[var(--accent)] bg-[var(--accent)]'
+                        : 'hairline bg-black/[0.045] hover:border-[var(--line-strong)] hover:bg-black/[0.075]'
+                    }`}
+                    style={{ flexGrow: getShotDuration(shot) }}
+                  />
+                ))}
+              </div>
+
+              <div className="mt-2">
+                {analysis.shots.map((shot, index) => (
+                  <ShotCard
+                    key={`${shot.startSeconds}-${shot.endSeconds}-${index}`}
+                    active={activeShotIndex === index}
+                    canSeek={Boolean(file)}
+                    index={index}
+                    isShotSegmentation={isShotSegmentation}
+                    shot={shot}
+                    onSeek={() => seekToShot(shot)}
+                    onDiscuss={onDiscussShot ? () => onDiscussShot(shot) : undefined}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="mt-6 text-sm text-[var(--text-muted)]">
+              本次分析没有返回可用{analysisUnitLabel}。
+            </p>
+          )}
+        </div>
+      </details>
 
       {analysis.risks.length > 0 && (
         <section className="border-y hairline py-5" aria-labelledby="video-risks-title">

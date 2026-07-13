@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { ChevronDown, Download, FileCode2, FileImage, FileText, LoaderCircle } from 'lucide-react';
-import type { AnalysisResult } from '../types';
-import type { EditPriority, EditRecommendationCategory } from '../types';
+import type {
+  AnalysisResult,
+  EditPriority,
+  EditRecommendationCategory,
+  SoundPriority,
+  SoundRoute,
+  VideoSoundCue,
+  VideoEditDecision,
+  VideoEditorialStatus,
+} from '../types';
 
 interface ExportMenuProps {
   analysis: AnalysisResult;
@@ -44,7 +52,50 @@ const editCategoryLabels: Record<EditRecommendationCategory, string> = {
   motion_graphics: '动态包装',
   typography: '字体',
   branding: '品牌',
+  sound: '声音',
 };
+
+const editDecisionLabels: Record<VideoEditDecision, string> = {
+  trim: '缩短',
+  remove: '删除',
+  replace: '替换',
+  reorder: '重排',
+  polish: '精修',
+  verify: '核对',
+};
+
+const editorialStatusLabels: Record<VideoEditorialStatus, string> = {
+  ready: '可直接交付',
+  minor_revision: '小改后交付',
+  major_revision: '需要重剪',
+};
+
+const soundPriorityLabels: Record<SoundPriority, string> = {
+  must: '必须保留',
+  recommended: '建议加入',
+  creative: '创意选项',
+};
+
+const diegeticStatusLabels: Record<VideoSoundCue['diegeticStatus'], string> = {
+  diegetic: '画内声',
+  non_diegetic: '画外声',
+  ambiguous: '声源待确认',
+};
+
+const soundRouteLabels: Record<SoundRoute, string> = {
+  integrated: '整体生成',
+  timed_clip: '定时音效',
+  library_foley: '素材库 / 拟音',
+  mix_only: '仅混音处理',
+  omit: '无需添加',
+};
+
+const qualityRecoveryReasonLabels = {
+  max_tokens: '输出截断后使用紧凑结构恢复',
+  invalid_response: '结构校验失败后重新生成',
+  low_detail: '首次结果信息偏薄，已启动定向深化',
+  repair_failed: '定向深化请求未完成，已保留首次结果',
+} as const;
 
 const createHtmlReport = (analysis: AnalysisResult, fileName: string): string => {
   const videoRecommendations =
@@ -55,6 +106,16 @@ const createHtmlReport = (analysis: AnalysisResult, fileName: string): string =>
             left.startSeconds - right.startSeconds,
         )
       : [];
+  const videoHighestPriority =
+    videoRecommendations.length === 0
+      ? analysis.type === 'video' && analysis.editReview.verdict?.status === 'ready'
+        ? '无需修改'
+        : '待复核'
+      : videoRecommendations.some(({ priority }) => priority === 'high')
+        ? '高'
+        : videoRecommendations.some(({ priority }) => priority === 'medium')
+          ? '中'
+          : '低';
   const title =
     analysis.type === 'music'
       ? analysis.mainGenre
@@ -103,19 +164,40 @@ const createHtmlReport = (analysis: AnalysisResult, fileName: string): string =>
       <section class="metrics">
         <div><small>Duration</small><strong>${escapeHtml(analysis.durationSeconds.toFixed(1))}s</strong></div>
         <div><small>${analysis.segmentation.mode === 'shot' ? '候选镜头' : '分析段落'}</small><strong>${escapeHtml(analysis.shots.length)}</strong></div>
-        <div><small>Priority actions</small><strong>${escapeHtml(analysis.editReview.recommendations.filter((item) => item.priority === 'high').length)}</strong></div>
+        <div><small>最高优先级</small><strong>${escapeHtml(videoHighestPriority)}</strong></div>
       </section>
-      ${
-        analysis.segmentation.mode === 'sequence'
-          ? `<section><h2>分段说明</h2><p><b>镜头总数未可靠确认</b></p><p>${escapeHtml(analysis.segmentation.note)}</p></section>`
-          : ''
-      }
-      <section><h2>诊断总览</h2>
-        <p>${escapeHtml(analysis.summary)}</p>
+      <section><h2>${analysis.editReview.verdict ? '审片结论' : '审片摘要'}</h2>
+        ${analysis.editReview.verdict ? `<p><b>交付判断：</b>${escapeHtml(editorialStatusLabels[analysis.editReview.verdict.status])}</p>` : ''}
+        <p>${escapeHtml(analysis.editReview.verdict?.rationale ?? analysis.summary)}</p>
+        ${analysis.editReview.verdict ? `<p><b>内容与目的：</b>${escapeHtml(analysis.summary)}</p>` : ''}
         <p><b>叙事结构：</b>${escapeHtml(analysis.narrativeArc)}</p>
         ${analysis.visualStyle.length ? `<p><b>视觉方向：</b></p>${renderTags(analysis.visualStyle)}` : ''}
-        ${analysis.editReview.strengths.length ? `<p><b>有效之处：</b></p>${analysis.editReview.strengths.map((item) => `<p>✓ ${escapeHtml(item)}</p>`).join('')}` : ''}
-        ${analysis.editReview.topIssues.length ? `<p><b>优先问题：</b></p>${analysis.editReview.topIssues.map((item) => `<p>• ${escapeHtml(item)}</p>`).join('')}` : ''}
+      </section>
+      <section><h2>判断依据</h2>
+        ${analysis.editReview.topIssues.length ? `<p><b>优先问题：</b></p>${analysis.editReview.topIssues.map((item) => `<p>• ${escapeHtml(item)}</p>`).join('')}` : '<p>未发现影响交付的核心问题。</p>'}
+        ${analysis.editReview.strengths.length ? `<p><b>保留项：</b></p>${analysis.editReview.strengths.map((item) => `<p>✓ ${escapeHtml(item)}</p>`).join('')}` : '<p>暂无明确保留项。</p>'}
+      </section>
+      <section><h2>优先修改</h2>
+        ${
+          videoRecommendations.length > 0
+            ? videoRecommendations
+                .map(
+                  (item) => `
+          <article class="row">
+            <code>${escapeHtml(item.startSeconds.toFixed(1))}–${escapeHtml(item.endSeconds.toFixed(1))}s</code>
+            <div>
+              <strong>${escapeHtml(editPriorityLabels[item.priority])} · ${escapeHtml(editCategoryLabels[item.category])}${item.decision ? ` · ${escapeHtml(editDecisionLabels[item.decision])}` : ''}</strong>
+              <p><b>依据：</b>${escapeHtml(item.evidence)}</p>
+              <p><b>动作：</b>${escapeHtml(item.action)}</p>
+              <p><b>预期：</b>${escapeHtml(item.expectedImpact)}</p>
+            </div>
+          </article>`,
+                )
+                .join('')
+            : analysis.editReview.verdict?.status === 'ready'
+              ? '<p>没有必须修改项</p>'
+              : '<p>未返回修改建议，需人工复核</p>'
+        }
       </section>
       <section><h2>节奏诊断</h2>
         <p>${escapeHtml(analysis.editReview.rhythmSummary)}</p>
@@ -135,23 +217,26 @@ const createHtmlReport = (analysis: AnalysisResult, fileName: string): string =>
         <article class="row"><code>VFX / 动效</code><div><p>${escapeHtml(analysis.editReview.visualFinish.vfxAndMotion)}</p></div></article>
         <article class="row"><code>字体 / 品牌</code><div><p>${escapeHtml(analysis.editReview.visualFinish.typographyAndBranding)}</p></div></article>
       </section>
-      <section><h2>剪辑行动清单</h2>
-        ${videoRecommendations
-          .map(
-            (item) => `
-          <article class="row">
-            <code>${escapeHtml(item.startSeconds.toFixed(1))}–${escapeHtml(item.endSeconds.toFixed(1))}s</code>
-            <div>
-              <strong>${escapeHtml(editPriorityLabels[item.priority])} · ${escapeHtml(editCategoryLabels[item.category])}</strong>
-              <p><b>依据：</b>${escapeHtml(item.evidence)}</p>
-              <p><b>动作：</b>${escapeHtml(item.action)}</p>
-              <p><b>预期：</b>${escapeHtml(item.expectedImpact)}</p>
-            </div>
-          </article>`,
-          )
-          .join('')}
+      <section><h2>分析依据与可信度</h2>
+        ${
+          analysis.quality
+            ? `<p><b>${analysis.quality.status === 'pass' ? '证据密度检查通过' : analysis.quality.status === 'enriched' ? '已自动深化' : '信息仍有限'}</b> · ${escapeHtml(analysis.quality.score)}/100 · ${analysis.quality.detailLevel === 'full' ? '完整结构' : '紧凑恢复'} · 深化尝试 ${escapeHtml(analysis.quality.automaticRepairs)}/1</p>
+        <p>本地启发式分数不代表事实识别准确率。</p>
+        <p><b>模型：</b>${escapeHtml(analysis.quality.model)}</p>
+        ${analysis.quality.recoveryReasons.map((reason) => `<p>• ${escapeHtml(qualityRecoveryReasonLabels[reason])}</p>`).join('')}
+        ${analysis.quality.issues.map((issue) => `<p>• 仍建议人工复核：${escapeHtml(issue)}</p>`).join('')}`
+            : ''
+        }
+        <p><b>${analysis.segmentation.detection ? '两阶段时间线' : analysis.segmentation.mode === 'shot' ? '时间线识别说明' : '镜头总数未可靠确认'}</b></p>
+        <p>${escapeHtml(analysis.segmentation.note)}</p>
+        ${
+          analysis.segmentation.detection
+            ? `<p>切点采样 ${escapeHtml(analysis.segmentation.detection.sampleRateFps)} FPS · 检测切点 ${escapeHtml(analysis.segmentation.detection.detectedCuts)} · 覆盖置信 ${escapeHtml(analysis.segmentation.detection.confidence === 'high' ? '高' : analysis.segmentation.detection.confidence === 'medium' ? '中' : '低')}</p>`
+            : ''
+        }
+        ${analysis.keywords.length ? `<p><b>搜索关键词：</b></p>${renderTags(analysis.keywords)}` : ''}
       </section>
-      <section><h2>${analysis.segmentation.mode === 'shot' ? '逐镜复核' : '段落复核'}</h2>
+      <section><h2>${analysis.segmentation.mode === 'shot' ? '逐镜证据' : '段落证据'}</h2>
         ${analysis.shots
           .map(
             (shot) => `
@@ -164,21 +249,9 @@ const createHtmlReport = (analysis: AnalysisResult, fileName: string): string =>
               <p><b>动作：</b>${escapeHtml(shot.visibleAction)}</p>
               ${shot.onScreenText ? `<p><b>画面文字：</b>${escapeHtml(shot.onScreenText)}</p>` : ''}
               ${shot.dialogue ? `<p><b>对白：</b>${escapeHtml(shot.dialogue)}</p>` : ''}
-            </div>
-          </article>`,
-          )
-          .join('')}
-      </section>
-      <section><h2>声音观察与设计</h2>
-        ${analysis.shots
-          .map(
-            (shot) => `
-          <article class="row">
-            <code>${escapeHtml(shot.startSeconds.toFixed(1))}–${escapeHtml(shot.endSeconds.toFixed(1))}s</code>
-            <div>
-              <strong>${escapeHtml(shot.soundCue.cue)}</strong>
-              <small>${escapeHtml(shot.soundCue.priority)} · ${escapeHtml(shot.soundCue.diegeticStatus)} · ${escapeHtml(shot.soundCue.route)}</small>
               <p><b>已有原声：</b>${escapeHtml(shot.existingSound)}</p>
+              <p><b>声音建议：</b>${escapeHtml(shot.soundCue.cue)}</p>
+              <small>${escapeHtml(soundPriorityLabels[shot.soundCue.priority])} · ${escapeHtml(diegeticStatusLabels[shot.soundCue.diegeticStatus])} · ${escapeHtml(soundRouteLabels[shot.soundCue.route])}</small>
               <p><b>声音作用：</b>${escapeHtml(shot.soundCue.function)}</p>
               <p><b>声音质感：</b>${escapeHtml(shot.soundCue.character)}</p>
               <p><b>混音风险：</b>${escapeHtml(shot.soundCue.mixRisk)}</p>
@@ -186,9 +259,8 @@ const createHtmlReport = (analysis: AnalysisResult, fileName: string): string =>
           </article>`,
           )
           .join('')}
-        ${analysis.risks.length ? `<p><b>制作提醒：</b></p>${analysis.risks.map((risk) => `<p>• ${escapeHtml(risk)}</p>`).join('')}` : ''}
       </section>
-      <section><h2>搜索关键词</h2>${renderTags(analysis.keywords)}</section>
+      ${analysis.risks.length ? `<section><h2>制作提醒</h2>${analysis.risks.map((risk) => `<p>• ${escapeHtml(risk)}</p>`).join('')}</section>` : ''}
       ${
         analysis.seedAudio
           ? `<section><h2>SeedAudio Brief</h2>

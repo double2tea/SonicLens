@@ -46,6 +46,8 @@ const AnalysisReport = lazy(() => import('./components/AnalysisReport'));
 
 interface AppState {
   analysis: AnalysisResult | null;
+  analysisMediaFile: File | null;
+  analysisMediaIsProxy: boolean;
   error: string | null;
   fileName: string | null;
   mode: AnalysisMode;
@@ -67,7 +69,12 @@ type AppAction =
       stage?: 'prepare' | 'detect' | 'analyze';
     }
   | { type: 'analyzing'; summary: string }
-  | { type: 'complete'; analysis: AnalysisResult }
+  | {
+      type: 'complete';
+      analysis: AnalysisResult;
+      analysisMediaFile: File;
+      analysisMediaIsProxy: boolean;
+    }
   | { type: 'update-analysis'; analysis: AnalysisResult }
   | { type: 'fail'; message: string }
   | { type: 'restore'; item: AnalysisHistoryItem; file: File | null }
@@ -75,6 +82,8 @@ type AppAction =
 
 const initialState: AppState = {
   analysis: null,
+  analysisMediaFile: null,
+  analysisMediaIsProxy: false,
   error: null,
   fileName: null,
   mode: 'music',
@@ -94,6 +103,8 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       return {
         ...state,
         analysis: null,
+        analysisMediaFile: null,
+        analysisMediaIsProxy: false,
         error: null,
         fileName: action.file.name,
         originalFile: action.file,
@@ -123,7 +134,13 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
         status: AnalysisState.ANALYZING,
       };
     case 'complete':
-      return { ...state, analysis: action.analysis, status: AnalysisState.COMPLETE };
+      return {
+        ...state,
+        analysis: action.analysis,
+        analysisMediaFile: action.analysisMediaFile,
+        analysisMediaIsProxy: action.analysisMediaIsProxy,
+        status: AnalysisState.COMPLETE,
+      };
     case 'update-analysis':
       return state.status === AnalysisState.COMPLETE
         ? { ...state, analysis: action.analysis }
@@ -134,6 +151,8 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       return {
         ...state,
         analysis: action.item.analysis,
+        analysisMediaFile: null,
+        analysisMediaIsProxy: false,
         error: null,
         fileName: action.item.fileName,
         mode: action.item.analysisMode,
@@ -292,7 +311,12 @@ export default function App() {
         );
         if (currentJobId() !== job.id) return;
 
-        dispatch({ type: 'complete', analysis: result });
+        dispatch({
+          type: 'complete',
+          analysis: result,
+          analysisMediaFile: analysisFile,
+          analysisMediaIsProxy: mode === 'video' && wasTranscoded,
+        });
         trackUsageEvent({
           eventName: 'analysis_completed',
           mode,
@@ -303,13 +327,19 @@ export default function App() {
           model: config.model,
         });
 
-        const nextHistory = cacheAnalysisHistoryItem({
-          fileName: selectedFile.name,
-          fileSize: selectedFile.size,
-          analysisMode: mode,
-          processingSummary: summary,
-          analysis: result,
-        });
+        let nextHistory: AnalysisHistoryItem[];
+        try {
+          nextHistory = cacheAnalysisHistoryItem({
+            fileName: selectedFile.name,
+            fileSize: selectedFile.size,
+            analysisMode: mode,
+            processingSummary: summary,
+            analysis: result,
+          });
+        } catch (storageError: unknown) {
+          setHistoryNotice(`分析已完成，但报告无法写入历史：${getErrorMessage(storageError)}`);
+          return;
+        }
         setAnalysisHistory(nextHistory);
         currentHistoryItemIdRef.current = nextHistory[0].id;
         try {
@@ -434,9 +464,14 @@ export default function App() {
 
   const updateAnalysis = useCallback((sourceIdentity: string, analysis: AnalysisResult) => {
     const historyItemId = currentHistoryItemIdRef.current;
-    if (historyItemId !== sourceIdentity) return;
-    setAnalysisHistory(updateAnalysisHistoryItem(historyItemId, analysis));
+    if (historyItemId && historyItemId !== sourceIdentity) return;
     dispatch({ type: 'update-analysis', analysis });
+    if (!historyItemId) return;
+    try {
+      setAnalysisHistory(updateAnalysisHistoryItem(historyItemId, analysis));
+    } catch (storageError: unknown) {
+      setHistoryNotice(`报告已更新，但无法写入历史：${getErrorMessage(storageError)}`);
+    }
   }, []);
 
   const currentReportIdentity = state.analysis
@@ -609,6 +644,8 @@ export default function App() {
               <AnalysisReport
                 key={currentReportIdentity}
                 analysis={state.analysis}
+                agentMediaFile={state.analysisMediaFile}
+                agentMediaIsProxy={state.analysisMediaIsProxy}
                 contentRef={reportRef}
                 file={state.originalFile}
                 fileName={state.fileName}
