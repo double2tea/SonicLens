@@ -8,7 +8,15 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AlertTriangle, ArrowRight, KeyRound, RotateCcw } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Github,
+  KeyRound,
+  Mail,
+  RotateCcw,
+  UserRound,
+} from 'lucide-react';
 import AppHeader from './components/AppHeader';
 import FileUpload from './components/FileUpload';
 import HistoryPanel from './components/HistoryPanel';
@@ -490,7 +498,7 @@ export default function App() {
   }, [state.mode]);
 
   return (
-    <div className="min-h-dvh">
+    <div className="flex min-h-dvh flex-col">
       <a href="#main-content" className="skip-link">
         跳到主要内容
       </a>
@@ -501,7 +509,7 @@ export default function App() {
         onReset={reset}
       />
 
-      <main id="main-content" className="app-shell">
+      <main id="main-content" className="app-shell flex-1">
         {state.status === AnalysisState.IDLE && (
           <div className="fade-up py-10 sm:py-14 lg:py-16">
             <section className="mb-10 grid gap-7 lg:grid-cols-[1.2fr_0.8fr] lg:items-end">
@@ -659,6 +667,38 @@ export default function App() {
           </div>
         )}
       </main>
+      <footer className="mt-12 border-t hairline">
+        <div className="app-shell flex flex-col gap-4 py-6 text-[0.68rem] text-[var(--text-muted)] sm:flex-row sm:items-center sm:justify-between">
+          <p>SonicLens · 为剪辑师而做的视听分析工具</p>
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-3" aria-label="项目与联系信息">
+            <a
+              href="https://github.com/double2tea/SonicLens"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 hover:text-[var(--text)]"
+            >
+              <Github size={14} strokeWidth={1.8} aria-hidden="true" />
+              GitHub
+            </a>
+            <a
+              href="https://zeezhi.pages.dev/"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 hover:text-[var(--text)]"
+            >
+              <UserRound size={14} strokeWidth={1.8} aria-hidden="true" />
+              作品集
+            </a>
+            <a
+              href="mailto:double_tea@foxmail.com"
+              className="inline-flex items-center gap-1.5 hover:text-[var(--text)]"
+            >
+              <Mail size={14} strokeWidth={1.8} aria-hidden="true" />
+              double_tea@foxmail.com
+            </a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }
