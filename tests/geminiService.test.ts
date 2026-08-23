@@ -183,7 +183,7 @@ const withTwoStageDetection = (
       weakestShotIndexes: assessment.weakestShotIndexes,
       automaticRepairs: 0,
       recoveryReasons,
-      model: 'gemini-3.5-flash',
+      model: 'gemini-3.7-flash',
     },
   };
 };
