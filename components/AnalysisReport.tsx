@@ -555,7 +555,12 @@ export default function AnalysisReport({
                 <SimilarTracksPanel tracks={similarTracks} />
               )}
               {activeUtility === 'prompt' && audioPrompt && !isVideo && (
-                <PromptGenerator prompt={audioPrompt} type={analysis.type} embedded />
+                <PromptGenerator
+                  prompt={audioPrompt}
+                  type={analysis.type}
+                  musicAnalysis={analysis.type === 'music' ? analysis : undefined}
+                  embedded
+                />
               )}
               {activeUtility === 'stock' && !isVideo && (
                 <div>

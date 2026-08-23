@@ -1,9 +1,16 @@
 import { useMemo, useState } from 'react';
 import { ArrowUpRight, Check, Copy, WandSparkles } from 'lucide-react';
-import type { AnalysisMode, SeedAudioContentMode } from '../types';
+import {
+  buildSunoPromptPackage,
+  type SunoEnergyMode,
+  type SunoGrooveMode,
+  type SunoTempoMode,
+} from '../services/sunoPrompt';
+import type { AnalysisMode, MusicAnalysisResult, SeedAudioContentMode } from '../types';
 
 interface PromptGeneratorProps {
   embedded?: boolean;
+  musicAnalysis?: MusicAnalysisResult;
   prompt: string;
   seedAudioContentMode?: SeedAudioContentMode;
   type: AnalysisMode;
@@ -52,6 +59,26 @@ const sfxKinetics: Array<{ id: SfxKinetic; label: string }> = [
   { id: 'loop', label: '无缝循环' },
 ];
 
+const sunoTempoModes: Array<{ id: SunoTempoMode; label: string }> = [
+  { id: 'source', label: '原速' },
+  { id: 'half_time', label: '半拍感' },
+  { id: 'double_time', label: '双拍感' },
+];
+
+const sunoGrooveModes: Array<{ id: SunoGrooveMode; label: string }> = [
+  { id: 'source', label: '保持律动' },
+  { id: 'straight', label: '直拍紧凑' },
+  { id: 'syncopated', label: '切分推进' },
+  { id: 'swung', label: 'Swing 摇摆' },
+];
+
+const sunoEnergyModes: Array<{ id: SunoEnergyMode; label: string }> = [
+  { id: 'source', label: '保持起伏' },
+  { id: 'steady', label: '能量稳定' },
+  { id: 'build', label: '逐段上推' },
+  { id: 'breakdown', label: 'Breakdown 回落' },
+];
+
 const musicVibeText: Record<MusicVibe, string> = {
   none: '',
   cinematic:
@@ -73,6 +100,30 @@ const vocalModeText: Record<VocalMode, string> = {
   male: 'intimate baritone male lead vocals, raw singer-songwriter delivery, warm close microphone',
   acoustic:
     'fully unplugged acoustic arrangement, organic instrumentation, nylon guitar, upright piano, natural room acoustics',
+};
+
+const sunoMusicVibeText: Record<MusicVibe, string> = {
+  none: '',
+  cinematic: 'cinematic orchestral, sweeping brass and staccato strings, dramatic crescendo',
+  vintage: 'vintage tape warmth, analog saturation, intimate room ambience',
+  cyber: 'cybernetic synthwave, modular synth pulse, industrial glitch texture',
+  haunting: 'haunting dark ambient, suspenseful drones, hollow reverb',
+};
+
+const sunoVocalDescription: Record<VocalMode, string> = {
+  none: '',
+  instrumental: '',
+  female: 'Expressive female lead vocal, clear and emotionally present',
+  male: 'Intimate male baritone lead vocal, warm close-mic delivery',
+  acoustic: '',
+};
+
+const sunoVocalStyleText: Record<VocalMode, string> = {
+  none: '',
+  instrumental: 'instrumental arrangement',
+  female: '',
+  male: '',
+  acoustic: 'unplugged acoustic arrangement, nylon guitar and upright piano',
 };
 
 const sfxSpaceText: Record<SfxSpace, string> = {
@@ -156,6 +207,7 @@ function OptionGroup<T extends string>({ label, onChange, options, value }: Opti
 
 export default function PromptGenerator({
   embedded = false,
+  musicAnalysis,
   prompt,
   seedAudioContentMode,
   type,
@@ -167,19 +219,56 @@ export default function PromptGenerator({
   const [vocalMode, setVocalMode] = useState<VocalMode>('none');
   const [sfxSpace, setSfxSpace] = useState<SfxSpace>('none');
   const [sfxKinetic, setSfxKinetic] = useState<SfxKinetic>('none');
+  const [sunoTempoMode, setSunoTempoMode] = useState<SunoTempoMode>('source');
+  const [sunoGrooveMode, setSunoGrooveMode] = useState<SunoGrooveMode>('source');
+  const [sunoEnergyMode, setSunoEnergyMode] = useState<SunoEnergyMode>('source');
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error' | 'limit'>('idle');
   const engineOptions = type === 'video' ? engines.filter(({ id }) => id === 'seedaudio') : engines;
 
+  const sunoPrompt = useMemo(() => {
+    if (type !== 'music' || targetEngine !== 'suno') return null;
+    const instrumental =
+      vocalMode === 'instrumental' ||
+      (vocalMode === 'none' && (musicAnalysis?.sonicProfile?.instrumental ?? 0) >= 70);
+    return buildSunoPromptPackage({
+      basePrompt: prompt,
+      bpm: musicAnalysis?.bpm,
+      energyMode: sunoEnergyMode,
+      excludeStyles: vocalMode === 'acoustic' ? ['no electronic drums', 'no autotune'] : [],
+      grooveMode: sunoGrooveMode,
+      instrumental,
+      key: musicAnalysis?.key,
+      styleAddition: [sunoMusicVibeText[musicVibe], sunoVocalStyleText[vocalMode]]
+        .filter(Boolean)
+        .join(', '),
+      tempoMode: sunoTempoMode,
+      timeSignature: musicAnalysis?.timeSignature,
+      vocalDescription: sunoVocalDescription[vocalMode],
+    });
+  }, [
+    musicAnalysis,
+    musicVibe,
+    prompt,
+    sunoEnergyMode,
+    sunoGrooveMode,
+    sunoTempoMode,
+    targetEngine,
+    type,
+    vocalMode,
+  ]);
+
   const customPrompt = useMemo(() => {
     if (type === 'video') return prompt.trim();
+    if (sunoPrompt) return sunoPrompt.clipboardText;
     const additions =
       type === 'music'
         ? [musicVibeText[musicVibe], vocalModeText[vocalMode]]
         : [sfxSpaceText[sfxSpace], sfxKineticText[sfxKinetic]];
     const description = [normalizePrompt(prompt), ...additions].filter(Boolean).join(', ');
     return formatForEngine(description, targetEngine, type);
-  }, [musicVibe, prompt, sfxKinetic, sfxSpace, targetEngine, type, vocalMode]);
+  }, [musicVibe, prompt, sfxKinetic, sfxSpace, sunoPrompt, targetEngine, type, vocalMode]);
   const isSeedAudio = targetEngine === 'seedaudio';
+  const isSuno = targetEngine === 'suno' && type === 'music';
   const isOverLimit = isSeedAudio && customPrompt.length > 2048;
 
   const copyPrompt = async (): Promise<boolean> => {
@@ -266,6 +355,35 @@ export default function PromptGenerator({
                   value={vocalMode}
                   onChange={setVocalMode}
                 />
+                {isSuno && (
+                  <div className="space-y-5 border-t hairline pt-5">
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-muted)]">节奏控制</p>
+                      <p className="mt-1 font-mono text-[0.66rem] text-[var(--text-subtle)]">
+                        {musicAnalysis?.bpm ? `${musicAnalysis.bpm} BPM` : 'BPM 未识别'} ·{' '}
+                        {musicAnalysis?.timeSignature || '拍号未识别'}
+                      </p>
+                    </div>
+                    <OptionGroup
+                      label="速度感"
+                      options={sunoTempoModes}
+                      value={sunoTempoMode}
+                      onChange={setSunoTempoMode}
+                    />
+                    <OptionGroup
+                      label="律动"
+                      options={sunoGrooveModes}
+                      value={sunoGrooveMode}
+                      onChange={setSunoGrooveMode}
+                    />
+                    <OptionGroup
+                      label="能量曲线"
+                      options={sunoEnergyModes}
+                      value={sunoEnergyMode}
+                      onChange={setSunoEnergyMode}
+                    />
+                  </div>
+                )}
               </>
             ) : type === 'sfx' ? (
               <>
@@ -319,9 +437,38 @@ export default function PromptGenerator({
               {copyState === 'copied' ? '已复制' : '复制'}
             </button>
           </div>
-          <div className="mt-4 min-h-40 flex-1 rounded-xl bg-[#1c221e] p-5 font-mono text-[0.78rem] leading-6 text-[#eff5f0]">
-            {customPrompt}
-          </div>
+          {isSuno && sunoPrompt ? (
+            <div className="mt-4 flex-1 space-y-3">
+              {[
+                ['Style of Music', sunoPrompt.styleWithExclusions],
+                ['Rhythm Control', sunoPrompt.rhythmControl],
+                ['Lyrics / Structure', sunoPrompt.structureTags],
+                [
+                  'Exclude Styles',
+                  sunoPrompt.excludeStyles.length ? sunoPrompt.excludeStyles.join(', ') : '(none)',
+                ],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-[#1c221e] p-5 text-[#eff5f0]">
+                  <p className="mb-2 font-sans text-[0.63rem] font-semibold uppercase tracking-[0.16em] text-[#9bac9f]">
+                    {label}
+                  </p>
+                  <pre className="whitespace-pre-wrap font-mono text-[0.76rem] leading-6">
+                    {value}
+                  </pre>
+                </div>
+              ))}
+              <p className="text-xs leading-5 text-[var(--text-muted)]">
+                BPM 与拍号放入 Style；Lyrics 只粘贴结构标签和真实歌词，避免制作说明被唱出。
+              </p>
+              <p className="text-right font-mono text-[0.64rem] text-[var(--text-muted)]">
+                Style {sunoPrompt.styleWithExclusions.length} / 1000 characters
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 min-h-40 flex-1 rounded-xl bg-[#1c221e] p-5 font-mono text-[0.78rem] leading-6 text-[#eff5f0]">
+              {customPrompt}
+            </div>
+          )}
           {isSeedAudio && (
             <p
               className={`mt-2 text-right font-mono text-[0.64rem] ${isOverLimit ? 'text-[var(--danger)]' : 'text-[var(--text-muted)]'}`}
@@ -345,7 +492,11 @@ export default function PromptGenerator({
             disabled={isOverLimit}
             className="accent-bg mt-5 inline-flex items-center justify-center gap-2 self-start rounded-lg px-4 py-2.5 text-xs font-bold"
           >
-            {isSeedAudio ? '复制 SeedAudio Prompt' : '复制并打开生成平台'}
+            {isSeedAudio
+              ? '复制 SeedAudio Prompt'
+              : isSuno
+                ? '复制 Suno 套件并打开'
+                : '复制并打开生成平台'}
             {isSeedAudio ? <Copy size={15} /> : <ArrowUpRight size={15} />}
           </button>
         </div>

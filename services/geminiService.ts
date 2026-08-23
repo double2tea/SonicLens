@@ -112,7 +112,7 @@ const sharedAnalysisProperties: Record<string, GeminiSchema> = {
   },
   optimizedPrompt: {
     type: 'STRING',
-    description: '用于 AI 生成工具 (如 Suno, Udio, ElevenLabs) 的英文提示词',
+    description: 'Suno V5/V5.5 Style of Music 英文提示词，不含结构标签或字段标题',
   },
 };
 
@@ -654,12 +654,13 @@ const buildSystemPrompt = (mode: AudioAnalysisMode, detailLevel: AnalysisDetailL
 1. **调式与速度辨识 (Key & BPM Recognition)**: 仔细分析其根音与和声倾向，给出准确的调式（如 G# Minor, C Major）和极高精度的代表性平均 BPM 以及拍号（如 4/4、3/4）。
 2. **配器与织体分析 (Instrumentation & Texture)**: 描述具有高度辨识度的器乐音色。不要只写 "Piano" 或 "Synthesizer"，要指出其特定属性（例如：带有Lofi噪音的 Rhodes 电子钢琴、1970年代尘土飞扬的 Vintage Tape 尼龙弦古典吉他、带着温暖锯齿波谐波的 Moog 模拟低音、或者 4/4 拍底部的双重重击 Roland TR-808 鼓机低音等）。
 3. **风格考古与流派科普 (Genre & Cultural Context)**: 给出最精确的主流派 (mainGenre) 及至多3个次级精细子流派 (subGenres)。简析该流派的诞生背景或标志性音频工程处理手段（例如，低保真采样微缩、磁带饱和度染色、重度侧链混缩压缩等）。
-4. **大模型 AI 音乐生成提示词设计 (\`optimizedPrompt\`)**:
-   设计一段极高质量的英文提示词，供 Suno、Udio 等工具生成风格高度相似的声音。必须包含：
-   - 精确的流派和时代印记标签（如: mid-tempo deep liquid drum & bass, early 1990s hip-hop beats）。
-   - 乐器特征细节（如: filtered warm Rhodes keys, organic nylon acoustic guitar, sweeping dry square wave synthesizer）。
-   - 声学空间与后期处理（如: tape saturation, high fidelity analog mastering, dusty vinyl warmth, room reverb）。
-   确保词汇充满动感、质感、专业混音语言。
+4. **Suno V5/V5.5 音乐生成提示词设计 (\`optimizedPrompt\`)**:
+   输出一段可直接粘贴进 Suno「Style of Music」的专业英文提示词：
+   - 采用 4-7 个清晰描述维度，避免堆叠超过 3 个流派；总长度不超过 70 个英文词、1000 字符。
+   - 有人声时先写声线、音域与演唱方式；纯器乐时明确写 instrumental。
+   - 包含精确流派/时代、1-3 个关键乐器、情绪、BPM、拍号、调式、groove/accent pattern，以及一项关键制作或混音特征。
+   - 不要写艺人或歌曲名，不要包含 \`[Style:]\`、段落标签、歌词、字段标题或解释文字。
+   - 段落结构与节奏变体由界面根据 BPM、拍号和用户控制生成，不要把 Verse/Chorus 结构塞进此字段。
 
 **非常重要：微观时间轴分析 (Timeline Analysis)**
 用户是电影剪辑师与导演，需要高精度段落点位。如果这首曲子包含不同的曲式结构章节（如 Intro 序奏, Verse 主歌, Chorus 爆发副歌, Outro 尾声）或是明显的串烧（Mix/Medley），你必须在 \`segments\` 中详细拆解。
